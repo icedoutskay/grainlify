@@ -1,8 +1,71 @@
+import { useState, useEffect } from 'react';
 import { Github, User, Upload, Link as LinkIcon } from 'lucide-react';
 import { useTheme } from '../../../../shared/contexts/ThemeContext';
+import { getCurrentUser } from '../../../../shared/api/client';
+
+interface CurrentUser {
+  id: string;
+  role: string;
+  github?: {
+    login: string;
+    avatar_url: string;
+    name?: string;
+    email?: string;
+    location?: string;
+    bio?: string;
+    website?: string;
+  };
+}
 
 export function ProfileTab() {
   const { theme } = useTheme();
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Form state
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [location, setLocation] = useState('');
+  const [website, setWebsite] = useState('');
+  const [bio, setBio] = useState('');
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      setIsLoading(true);
+      try {
+        const user = await getCurrentUser();
+        setCurrentUser(user);
+        
+        // Prefill form fields from GitHub data
+        if (user.github) {
+          // Split name into first and last name
+          if (user.github.name) {
+            const nameParts = user.github.name.trim().split(/\s+/);
+            if (nameParts.length > 0) {
+              setFirstName(nameParts[0]);
+              if (nameParts.length > 1) {
+                setLastName(nameParts.slice(1).join(' '));
+              }
+            }
+          }
+          if (user.github.location) {
+            setLocation(user.github.location);
+          }
+          if (user.github.website) {
+            setWebsite(user.github.website);
+          }
+          if (user.github.bio) {
+            setBio(user.github.bio);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch user data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchUser();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -42,7 +105,15 @@ export function ProfileTab() {
         }`}>
           <span className={`text-[15px] font-medium transition-colors ${
             theme === 'dark' ? 'text-[#d4c5b0]' : 'text-[#2d2820]'
-          }`}>undefined / undefined</span>
+          }`}>
+            {isLoading ? (
+              <span className="inline-block w-32 h-4 bg-white/10 rounded animate-pulse" />
+            ) : currentUser?.github ? (
+              `${currentUser.github.login} / ${currentUser.github.email || `${currentUser.github.login}@users.noreply.github.com`}`
+            ) : (
+              'Not connected / Not connected'
+            )}
+          </span>
           <div className="flex items-center gap-3">
             <button className={`px-5 py-2.5 rounded-[12px] backdrop-blur-[30px] border font-medium text-[14px] hover:bg-white/[0.25] transition-all flex items-center gap-2 ${
               theme === 'dark'
@@ -73,9 +144,19 @@ export function ProfileTab() {
         }`}>SVG, PNG, JPG or GIF</p>
 
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#c9983a] to-[#a67c2e] flex items-center justify-center shadow-md border border-white/15">
-            <User className="w-8 h-8 text-white" />
-          </div>
+          {isLoading ? (
+            <div className="w-16 h-16 rounded-full bg-white/10 animate-pulse" />
+          ) : currentUser?.github?.avatar_url ? (
+            <img
+              src={currentUser.github.avatar_url}
+              alt="Profile"
+              className="w-16 h-16 rounded-full object-cover shadow-md border border-white/15"
+            />
+          ) : (
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#c9983a] to-[#a67c2e] flex items-center justify-center shadow-md border border-white/15">
+              <User className="w-8 h-8 text-white" />
+            </div>
+          )}
           <button className={`px-5 py-2.5 rounded-[12px] backdrop-blur-[30px] border font-medium text-[14px] hover:bg-white/[0.2] transition-all flex items-center gap-2 ${
             theme === 'dark'
               ? 'bg-[#3d342c]/[0.4] border-white/15 text-[#d4c5b0]'
@@ -102,6 +183,8 @@ export function ProfileTab() {
             <input
               type="text"
               placeholder="Enter your first name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
               className={`w-full px-4 py-3 rounded-[14px] backdrop-blur-[30px] border focus:outline-none focus:bg-white/[0.2] focus:border-[#c9983a]/30 transition-all text-[14px] ${
                 theme === 'dark'
                   ? 'bg-[#3d342c]/[0.4] border-white/15 text-[#f5efe5] placeholder-[#8a7e70]'
@@ -118,6 +201,8 @@ export function ProfileTab() {
             <input
               type="text"
               placeholder="Enter your last name"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
               className={`w-full px-4 py-3 rounded-[14px] backdrop-blur-[30px] border focus:outline-none focus:bg-white/[0.2] focus:border-[#c9983a]/30 transition-all text-[14px] ${
                 theme === 'dark'
                   ? 'bg-[#3d342c]/[0.4] border-white/15 text-[#f5efe5] placeholder-[#8a7e70]'
@@ -134,6 +219,8 @@ export function ProfileTab() {
             <input
               type="text"
               placeholder="Enter your location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
               className={`w-full px-4 py-3 rounded-[14px] backdrop-blur-[30px] border focus:outline-none focus:bg-white/[0.2] focus:border-[#c9983a]/30 transition-all text-[14px] ${
                 theme === 'dark'
                   ? 'bg-[#3d342c]/[0.4] border-white/15 text-[#f5efe5] placeholder-[#8a7e70]'
@@ -150,6 +237,8 @@ export function ProfileTab() {
             <input
               type="text"
               placeholder="Enter your website"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
               className={`w-full px-4 py-3 rounded-[14px] backdrop-blur-[30px] border focus:outline-none focus:bg-white/[0.2] focus:border-[#c9983a]/30 transition-all text-[14px] ${
                 theme === 'dark'
                   ? 'bg-[#3d342c]/[0.4] border-white/15 text-[#f5efe5] placeholder-[#8a7e70]'
@@ -167,6 +256,8 @@ export function ProfileTab() {
           <textarea
             placeholder="Enter your bio"
             rows={4}
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
             className={`w-full px-4 py-3 rounded-[14px] backdrop-blur-[30px] border focus:outline-none focus:bg-white/[0.2] focus:border-[#c9983a]/30 transition-all text-[14px] resize-none ${
               theme === 'dark'
                 ? 'bg-[#3d342c]/[0.4] border-white/15 text-[#f5efe5] placeholder-[#8a7e70]'

@@ -9,6 +9,7 @@ import (
 	"github.com/jagadeesh/grainlify/backend/internal/auth"
 	"github.com/jagadeesh/grainlify/backend/internal/config"
 	"github.com/jagadeesh/grainlify/backend/internal/db"
+	"github.com/jagadeesh/grainlify/backend/internal/github"
 )
 
 type AuthHandler struct {
@@ -146,29 +147,76 @@ func (h *AuthHandler) Me() fiber.Handler {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid_user"})
 		}
 
-		// Get GitHub account info if linked
-		var githubLogin *string
-		var avatarURL *string
-		err = h.db.Pool.QueryRow(c.Context(), `
-SELECT login, avatar_url
-FROM github_accounts
-WHERE user_id = $1
-`, userID).Scan(&githubLogin, &avatarURL)
-		
 		response := fiber.Map{
 			"id":   userIDStr,
 			"role": role,
 		}
 
-		// Add GitHub info if available
-		if err == nil && githubLogin != nil {
-			githubMap := fiber.Map{
-				"login": *githubLogin,
+		// Try to get GitHub access token and fetch full profile
+		linkedAccount, err := github.GetLinkedAccount(c.Context(), h.db.Pool, userID, h.cfg.TokenEncKeyB64)
+		if err == nil {
+			// Fetch full GitHub user profile
+			gh := github.NewClient()
+			ghUser, err := gh.GetUser(c.Context(), linkedAccount.AccessToken)
+			if err == nil {
+				githubMap := fiber.Map{
+					"login":     ghUser.Login,
+					"avatar_url": ghUser.AvatarURL,
+				}
+				// Add optional fields if available
+				if ghUser.Name != "" {
+					githubMap["name"] = ghUser.Name
+				}
+				if ghUser.Email != "" {
+					githubMap["email"] = ghUser.Email
+				}
+				if ghUser.Location != "" {
+					githubMap["location"] = ghUser.Location
+				}
+				if ghUser.Bio != "" {
+					githubMap["bio"] = ghUser.Bio
+				}
+				if ghUser.Blog != "" {
+					githubMap["website"] = ghUser.Blog
+				}
+				response["github"] = githubMap
+			} else {
+				// Fallback to database values if GitHub API fails
+				var githubLogin *string
+				var avatarURL *string
+				_ = h.db.Pool.QueryRow(c.Context(), `
+SELECT login, avatar_url
+FROM github_accounts
+WHERE user_id = $1
+`, userID).Scan(&githubLogin, &avatarURL)
+				if githubLogin != nil {
+					githubMap := fiber.Map{
+						"login": *githubLogin,
+					}
+					if avatarURL != nil && *avatarURL != "" {
+						githubMap["avatar_url"] = *avatarURL
+					}
+					response["github"] = githubMap
+				}
 			}
-			if avatarURL != nil && *avatarURL != "" {
-				githubMap["avatar_url"] = *avatarURL
+		} else {
+			// No GitHub account linked, try to get from database anyway
+			var githubLogin *string
+			var avatarURL *string
+			_ = h.db.Pool.QueryRow(c.Context(), `
+SELECT login, avatar_url
+FROM github_accounts
+WHERE user_id = $1
+`, userID).Scan(&githubLogin, &avatarURL)
+			if githubLogin != nil {
+				githubMap := fiber.Map{
+					"login": *githubLogin,
+				}
+				if avatarURL != nil && *avatarURL != "" {
+					githubMap["avatar_url"] = *avatarURL
+				}
+				response["github"] = githubMap
 			}
-			response["github"] = githubMap
 		}
 
 		return c.Status(fiber.StatusOK).JSON(response)

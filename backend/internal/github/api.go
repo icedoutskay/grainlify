@@ -24,6 +24,11 @@ type User struct {
 	ID        int64  `json:"id"`
 	Login     string `json:"login"`
 	AvatarURL string `json:"avatar_url"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	Location  string `json:"location"`
+	Bio       string `json:"bio"`
+	Blog      string `json:"blog"` // Website URL
 }
 
 func (c *Client) GetUser(ctx context.Context, accessToken string) (User, error) {
