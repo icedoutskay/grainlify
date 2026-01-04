@@ -83,7 +83,7 @@ export function IssueCard({
           )}
         </div>
         {description && (
-          <p className={`text-[13px] mb-3 transition-colors ${
+          <p className={`text-[13px] mb-3 line-clamp-2 transition-colors ${
             isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
           }`}>
             {description}

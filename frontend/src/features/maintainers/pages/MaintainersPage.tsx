@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ChevronDown, ChevronRight, Plus, Settings as SettingsIcon, Loader2, AlertCircle, Package } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Settings as SettingsIcon, AlertCircle, Package } from 'lucide-react';
 import { useTheme } from '../../../shared/contexts/ThemeContext';
+import { SkeletonLoader } from '../../../shared/components/SkeletonLoader';
 import { DashboardTab } from '../components/dashboard/DashboardTab';
 import { IssuesTab } from '../components/issues/IssuesTab';
 import { PullRequestsTab } from '../components/pull-requests/PullRequestsTab';
@@ -208,8 +209,14 @@ export function MaintainersPage({ onNavigate }: MaintainersPageProps) {
                 {/* Repository List */}
                 <div className="py-3 max-h-[420px] overflow-y-auto">
                   {isLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className={`w-6 h-6 animate-spin ${theme === 'dark' ? 'text-[#c9983a]' : 'text-[#c9983a]'}`} />
+                    <div className="px-6 space-y-2">
+                      {[...Array(5)].map((_, idx) => (
+                        <div key={idx} className="flex items-center gap-3 py-3">
+                          <SkeletonLoader variant="circle" className="w-5 h-5 flex-shrink-0" />
+                          <SkeletonLoader className="h-4 w-32" />
+                          <SkeletonLoader className="h-4 w-20 ml-auto" />
+                        </div>
+                      ))}
                     </div>
                   ) : error ? (
                     <div className={`flex items-center gap-3 px-6 py-4 mx-4 rounded-[12px] ${

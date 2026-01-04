@@ -1,11 +1,13 @@
 import { useTheme } from '../../../shared/contexts/ThemeContext';
-import { Heart, Star, GitFork, ArrowUpRight, Target, Zap } from 'lucide-react';
+import { Heart, Star, GitFork, ArrowUpRight, Target, Zap, AlertCircle } from 'lucide-react';
 import { LanguageIcon } from '../../../shared/components/LanguageIcon';
 import { IssueCard } from '../../../shared/components/ui/IssueCard';
 import { useState, useEffect } from 'react';
 import { IssueDetailPage } from './IssueDetailPage';
 import { ProjectDetailPage } from './ProjectDetailPage';
 import { getRecommendedProjects, getPublicProjectIssues } from '../../../shared/api/client';
+import { SkeletonLoader } from '../../../shared/components/SkeletonLoader';
+import { getUserFriendlyError } from '../../../shared/utils/errorHandler';
 
 // Helper function to format numbers (e.g., 1234 -> "1.2K", 1234567 -> "1.2M")
 const formatNumber = (num: number): string => {
@@ -55,6 +57,38 @@ const truncateDescription = (description: string | undefined | null, maxLength: 
   }
   
   return firstLine;
+};
+
+// Helper function to clean and truncate issue description
+const cleanIssueDescription = (description: string | null | undefined, maxLines: number = 2, maxLength: number = 150): string => {
+  if (!description || description.trim() === '') {
+    return '';
+  }
+  
+  // Remove markdown headers and formatting
+  let cleaned = description
+    // Remove markdown headers (##, ###, etc.)
+    .replace(/^#{1,6}\s+/gm, '')
+    // Remove bold/italic markdown (**text**, *text*)
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    // Remove common prefixes like "Description:", "**Description:**", etc.
+    .replace(/^(Description|DESCRIPTION|description):\s*/i, '')
+    .replace(/^\*\*Description:\*\*\s*/i, '')
+    .replace(/^\*\*DESCRIPTION:\*\*\s*/i, '')
+    // Remove leading/trailing whitespace
+    .trim();
+  
+  // Split into lines and take first maxLines
+  const lines = cleaned.split('\n').filter(line => line.trim() !== '');
+  const selectedLines = lines.slice(0, maxLines).join(' ').trim();
+  
+  // Truncate if too long
+  if (selectedLines.length > maxLength) {
+    return selectedLines.substring(0, maxLength).trim() + '...';
+  }
+  
+  return selectedLines;
 };
 
 // Helper function to calculate days left (mock for now, can be enhanced with actual dates)
@@ -137,7 +171,7 @@ export function DiscoverPage() {
             stars: formatNumber(p.stars_count || 0),
             forks: formatNumber(p.forks_count || 0),
             issues: p.open_issues_count || 0,
-            description: truncateDescription(p.description) || `${p.language || 'Project'} repository${p.category ? ` - ${p.category}` : ''}`,
+            description: truncateDescription(p.description) || '',
             tags: Array.isArray(p.tags) ? p.tags.slice(0, 2) : [],
             color: getProjectColor(repoName),
           };
@@ -145,8 +179,8 @@ export function DiscoverPage() {
         
         setProjects(mappedProjects);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to load recommended projects';
-        setError(errorMessage);
+        const userFriendlyError = getUserFriendlyError(err);
+        setError(userFriendlyError);
         setProjects([]);
       } finally {
         setIsLoadingProjects(false);
@@ -191,7 +225,7 @@ export function DiscoverPage() {
               issues.push({
                 id: String(issue.github_issue_id),
                 title: issue.title || 'Untitled Issue',
-                description: issue.description || '',
+                description: cleanIssueDescription(issue.description),
                 language: language,
                 daysLeft: getDaysLeft(),
                 primaryTag: getPrimaryTag(issue.labels || []),
@@ -311,21 +345,60 @@ export function DiscoverPage() {
         </p>
 
         {error && (
-          <div className={`p-4 rounded-[16px] border mb-6 ${
+          <div className={`flex items-start gap-3 p-4 rounded-[16px] border mb-6 ${
             theme === 'dark'
-              ? 'bg-red-500/10 border-red-500/30 text-red-400'
-              : 'bg-red-500/10 border-red-500/30 text-red-600'
+              ? 'bg-red-500/10 border-red-500/30'
+              : 'bg-red-50/80 border-red-200/50'
           }`}>
-            <p className="text-[14px] font-semibold">Error: {error}</p>
+            <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+              theme === 'dark' ? 'text-red-400' : 'text-red-600'
+            }`} />
+            <div className="flex-1">
+              <p className={`text-[14px] font-semibold mb-1 ${
+                theme === 'dark' ? 'text-red-400' : 'text-red-700'
+              }`}>
+                Unable to load recommended projects
+              </p>
+              <p className={`text-[13px] ${
+                theme === 'dark' ? 'text-red-300/80' : 'text-red-600/80'
+              }`}>
+                {error}
+              </p>
+            </div>
           </div>
         )}
 
         {isLoadingProjects ? (
           <div className="flex gap-6 overflow-x-auto pb-2">
             {[...Array(4)].map((_, idx) => (
-              <div key={idx} className={`flex-shrink-0 w-[320px] h-[280px] rounded-[20px] border ${
+              <div key={idx} className={`flex-shrink-0 w-[320px] rounded-[20px] border p-6 ${
                 theme === 'dark' ? 'bg-white/[0.08] border-white/15' : 'bg-white/[0.15] border-white/25'
-              }`} />
+              }`}>
+                {/* Icon and Heart button */}
+                <div className="flex items-start justify-between mb-4">
+                  <SkeletonLoader variant="default" className="w-12 h-12 rounded-[14px]" />
+                  <SkeletonLoader variant="default" className="w-5 h-5 rounded-full" />
+                </div>
+                
+                {/* Title */}
+                <SkeletonLoader className="h-5 w-3/4 mb-2" />
+                
+                {/* Description */}
+                <SkeletonLoader className="h-3 w-full mb-1" />
+                <SkeletonLoader className="h-3 w-5/6 mb-4" />
+                
+                {/* Stars and Forks */}
+                <div className="flex items-center space-x-4 mb-4">
+                  <SkeletonLoader className="h-4 w-16" />
+                  <SkeletonLoader className="h-4 w-16" />
+                </div>
+                
+                {/* Tags */}
+                <div className="flex flex-wrap gap-2">
+                  <SkeletonLoader className="h-7 w-20 rounded-[10px]" />
+                  <SkeletonLoader className="h-7 w-24 rounded-[10px]" />
+                </div>
+              </div>
             ))}
           </div>
         ) : projects.length === 0 ? (
@@ -426,9 +499,31 @@ export function DiscoverPage() {
         {isLoadingIssues ? (
           <div className="flex gap-4 overflow-x-auto pb-2">
             {[...Array(3)].map((_, idx) => (
-              <div key={idx} className={`flex-shrink-0 w-[480px] h-[200px] rounded-[16px] border ${
+              <div key={idx} className={`flex-shrink-0 w-[480px] rounded-[16px] border p-6 ${
                 theme === 'dark' ? 'bg-white/[0.08] border-white/15' : 'bg-white/[0.15] border-white/25'
-              }`} />
+              }`}>
+                {/* Title with status indicator */}
+                <div className="flex items-start gap-3 mb-3">
+                  <SkeletonLoader variant="circle" className="w-5 h-5 flex-shrink-0" />
+                  <SkeletonLoader className="h-5 w-3/4" />
+                </div>
+                
+                {/* Description */}
+                <div className="ml-8 mb-4">
+                  <SkeletonLoader className="h-4 w-full mb-1" />
+                  <SkeletonLoader className="h-4 w-5/6" />
+                </div>
+                
+                {/* Bottom row: Language, Days Left, Tag */}
+                <div className="flex items-center justify-between ml-8">
+                  <div className="flex items-center gap-3">
+                    <SkeletonLoader variant="circle" className="w-4 h-4" />
+                    <SkeletonLoader className="h-4 w-20" />
+                    <SkeletonLoader className="h-4 w-16" />
+                  </div>
+                  <SkeletonLoader className="h-6 w-24 rounded-[6px]" />
+                </div>
+              </div>
             ))}
           </div>
         ) : recommendedIssues.length === 0 ? (

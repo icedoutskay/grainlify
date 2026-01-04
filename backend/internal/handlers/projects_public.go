@@ -686,29 +686,24 @@ LIMIT $1
 				forks = *forksCount
 			}
 
-			// Fetch fresh data from GitHub if stars/forks are 0 or nil
-			if stars == 0 || forks == 0 {
-				if repo, err := gh.GetRepo(ctx, "", fullName); err == nil {
-					if repo.StargazersCount > 0 {
-						stars = repo.StargazersCount
-					}
-					if repo.ForksCount > 0 {
-						forks = repo.ForksCount
-					}
-					// Best-effort persist (non-blocking)
-					go func(projectID uuid.UUID, st, fk int) {
-						_, _ = h.db.Pool.Exec(context.Background(), `
-UPDATE projects SET stars_count=$2, forks_count=$3, updated_at=now()
-WHERE id=$1
-`, projectID, st, fk)
-					}(id, stars, forks)
-				}
-			}
-
-			// Get repo description from GitHub
+			// Get repo description and fresh data from GitHub (best effort)
 			var description string
 			if repo, err := gh.GetRepo(ctx, "", fullName); err == nil {
 				description = repo.Description
+				// Prefer live counts from GitHub if available
+				if repo.StargazersCount > 0 {
+					stars = repo.StargazersCount
+				}
+				if repo.ForksCount > 0 {
+					forks = repo.ForksCount
+				}
+				// Best-effort persist (non-blocking)
+				go func(projectID uuid.UUID, st, fk int) {
+					_, _ = h.db.Pool.Exec(context.Background(), `
+UPDATE projects SET stars_count=$2, forks_count=$3, updated_at=now()
+WHERE id=$1
+`, projectID, st, fk)
+				}(id, stars, forks)
 			}
 
 			out = append(out, fiber.Map{

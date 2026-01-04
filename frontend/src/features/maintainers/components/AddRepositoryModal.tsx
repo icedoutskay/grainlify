@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useTheme } from '../../../shared/contexts/ThemeContext';
 import { createProject, getEcosystems } from '../../../shared/api/client';
+import { SkeletonLoader } from '../../../shared/components/SkeletonLoader';
 
 interface AddRepositoryModalProps {
   isOpen: boolean;
@@ -216,14 +217,7 @@ export function AddRepositoryModal({ isOpen, onClose, onSuccess }: AddRepository
               Ecosystem <span className="text-red-500">*</span>
             </label>
             {isLoadingEcosystems ? (
-              <div className={`flex items-center gap-2 px-4 py-3 rounded-[12px] ${
-                darkTheme ? 'bg-white/10' : 'bg-white/40'
-              }`}>
-                <Loader2 className="w-4 h-4 animate-spin text-[#c9983a]" />
-                <span className={`text-[14px] ${darkTheme ? 'text-[#b8a898]' : 'text-[#7a6b5a]'}`}>
-                  Loading ecosystems...
-                </span>
-              </div>
+              <SkeletonLoader className="h-12 w-full rounded-[12px]" />
             ) : (
               <select
                 value={ecosystemName}
