@@ -54,7 +54,7 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
   const { userRole, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
-  const [selectedIssueFromAPI, setSelectedIssueFromAPI] = useState<IssueFromAPI | null>(null);
+  const [selectedIssueFromAPI, setSelectedIssueFromAPI] = useState<(IssueFromAPI & { projectName: string; projectId: string }) | null>(null);
   const [failedAvatars, setFailedAvatars] = useState<Set<string>>(new Set());
   const [issueDetailTab, setIssueDetailTab] = useState<'applications' | 'discussions'>('applications');
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
@@ -131,7 +131,7 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
       console.warn('Missing date string for time ago formatting');
       return 'Unknown';
     }
-    
+
     try {
       const date = new Date(dateString);
       if (isNaN(date.getTime())) {
@@ -176,13 +176,67 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
       const allIssues = await Promise.all(issuePromises);
       const flattenedIssues = allIssues.flat();
-      
+
       // Sort by updated_at (most recent first)
       flattenedIssues.sort((a, b) => {
         const dateA = a.updated_at ? new Date(a.updated_at).getTime() : new Date(a.last_seen_at).getTime();
         const dateB = b.updated_at ? new Date(b.updated_at).getTime() : new Date(b.last_seen_at).getTime();
         return dateB - dateA;
       });
+
+      // MOCK DATA INJECTION
+      flattenedIssues.push({
+        github_issue_id: 12345,
+        number: 42,
+        state: 'open',
+        title: 'Fix the flux capacitor',
+        description: 'It is not fluxing correctly',
+        author_login: 'martymcfly',
+        assignees: [],
+        labels: [],
+        comments_count: 3,
+        comments: [],
+        url: 'https://github.com/mock-org/mock-repo/issues/42',
+        updated_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString(),
+        projectName: 'mock-org/mock-repo',
+        projectId: 'mock-p-1',
+      });
+      flattenedIssues.push({
+        github_issue_id: 67890,
+        number: 101,
+        state: 'open',
+        title: 'Add structured logging',
+        description: 'We need better logs',
+        author_login: 'docbrown',
+        assignees: [],
+        labels: [{ name: 'enhancement', color: 'blue' }],
+        comments_count: 1,
+        comments: [],
+        url: 'https://github.com/mock-org/utils/issues/101',
+        updated_at: new Date(Date.now() - 3600000).toISOString(),
+        last_seen_at: new Date(Date.now() - 3600000).toISOString(),
+        projectName: 'mock-org/utils',
+        projectId: 'mock-p-2',
+      });
+      flattenedIssues.push({
+        github_issue_id: 11223,
+        number: 5,
+        state: 'open',
+        title: 'Update documentation',
+        description: 'Docs are outdated',
+        author_login: 'einstein',
+        assignees: [],
+        labels: [{ name: 'documentation', color: 'green' }],
+        comments_count: 0,
+        comments: [],
+        url: 'https://github.com/mock-org/core/issues/5',
+        updated_at: new Date(Date.now() - 86400000).toISOString(),
+        last_seen_at: new Date(Date.now() - 86400000).toISOString(),
+        projectName: 'mock-org/core',
+        projectId: 'mock-p-3',
+      });
+      // END MOCK DATA
 
       setIssues(flattenedIssues);
       setIsLoadingIssues(false);
@@ -213,7 +267,7 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('repositories-refreshed', handleRepositoriesRefreshed);
-    
+
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('repositories-refreshed', handleRepositoriesRefreshed);
@@ -232,12 +286,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
   const getApplicationData = (issue: Issue | null, issueFromAPI: IssueFromAPI | null) => {
     if (!issue || !issueFromAPI) return null;
-    
+
     // Get all comments from the API
     const comments = issueFromAPI.comments || [];
     const issueAuthor = issueFromAPI.author_login;
     const appPrefix = '[grainlify application]';
-    
+
     // Applications are explicit Grainlify application comments (so discussions can contain other chatter).
     const applications = comments
       .filter(comment => (comment.body || '').toLowerCase().startsWith(appPrefix))
@@ -256,7 +310,7 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
         projectsContributed: 0,
         projectsLead: 0,
       }));
-    
+
     // Discussions are all comments (including from the author)
     const discussions = comments.map((comment) => ({
       id: comment.id.toString(),
@@ -266,7 +320,7 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
       isAuthor: comment.user.login === issueAuthor,
       appliedForContribution: (comment.body || '').toLowerCase().startsWith(appPrefix),
     }));
-    
+
     return {
       applications,
       discussions,
@@ -398,45 +452,41 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
         {/* Search and Filter Row */}
         <div className="flex items-center gap-3 flex-shrink-0">
           {/* Search Bar */}
-          <div className={`flex-1 backdrop-blur-[40px] rounded-[16px] border p-3 transition-colors ${
-            isDark
-              ? 'bg-white/[0.12] border-white/20'
-              : 'bg-white/[0.12] border-white/20'
-          }`}>
+          <div className={`flex-1 backdrop-blur-[40px] rounded-[16px] border p-3 transition-colors ${isDark
+            ? 'bg-white/[0.12] border-white/20'
+            : 'bg-white/[0.12] border-white/20'
+            }`}>
             <div className="flex items-center gap-2">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={`flex-shrink-0 ${isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'}`}>
-                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="m11 11 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+                <path d="m11 11 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               <input
                 type="text"
                 placeholder="Search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`flex-1 bg-transparent border-none outline-none text-[13px] placeholder:text-[13px] transition-colors ${
-                  isDark
-                    ? 'text-[#f5f5f5] placeholder-[#d4d4d4]'
-                    : 'text-[#2d2820] placeholder-[#7a6b5a]'
-                }`}
+                className={`flex-1 bg-transparent border-none outline-none text-[13px] placeholder:text-[13px] transition-colors ${isDark
+                  ? 'text-[#f5f5f5] placeholder-[#d4d4d4]'
+                  : 'text-[#2d2820] placeholder-[#7a6b5a]'
+                  }`}
               />
             </div>
           </div>
 
           {/* Filter Button with Badge */}
-          <button 
+          <button
             ref={filterBtnRef}
             onClick={() => setIsFilterModalOpen((v) => !v)}
-            className={`relative p-3 rounded-[16px] backdrop-blur-[40px] border hover:bg-white/[0.15] transition-all ${
-            isDark
+            className={`relative p-3 rounded-[16px] backdrop-blur-[40px] border hover:bg-white/[0.15] transition-all ${isDark
               ? 'bg-white/[0.12] border-white/20'
               : 'bg-white/[0.12] border-white/20'
-          }`}>
+              }`}>
             <div className="absolute -top-2 -right-2 w-6 h-6 bg-gradient-to-br from-[#e8c571] to-[#c9983a] rounded-full text-[12px] font-bold text-white flex items-center justify-center">
               {appliedFilterCount}
             </div>
-            <Filter className={`w-4 h-4 transition-colors ${
-              isDark ? 'text-[#f5f5f5]' : 'text-[#2d2820]'
-            }`} />
+            <Filter className={`w-4 h-4 transition-colors ${isDark ? 'text-[#f5f5f5]' : 'text-[#2d2820]'
+              }`} />
           </button>
         </div>
 
@@ -449,75 +499,72 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
               ))}
             </div>
           ) : issues.length === 0 ? (
-            <div className={`px-6 py-8 text-center ${
-              isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-            }`}>
+            <div className={`px-6 py-8 text-center ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+              }`}>
               <p className="text-[14px] font-medium mb-1">No issues found</p>
               <p className="text-[12px]">
-                {selectedProjects.length === 0 
-                  ? 'Select repositories to view issues' 
+                {selectedProjects.length === 0
+                  ? 'Select repositories to view issues'
                   : 'No issues in selected repositories'}
               </p>
             </div>
           ) : visibleIssues.length === 0 ? (
-            <div className={`px-6 py-8 text-center ${
-              isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-            }`}>
+            <div className={`px-6 py-8 text-center ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+              }`}>
               <p className="text-[14px] font-medium mb-1">No issues match the filters</p>
               <p className="text-[12px]">Try changing filters or clearing them.</p>
             </div>
           ) : (
             <>
               {visibleIssues.map((issue) => {
-                  // Convert API issue to Issue type for compatibility
-                  // Backend now always provides updated_at_github, so we use updated_at
-                  const timeAgoFormatted = formatTimeAgo(issue.updated_at);
-                  
-                  const issueForCard: Issue = {
-                    id: issue.github_issue_id.toString(),
-                    number: issue.number, // Store the issue number
-                    title: issue.title,
-                    repository: issue.projectName,
-                    repo: issue.projectName,
-                    user: issue.author_login,
-                    timeAgo: timeAgoFormatted,
-                    tags: issue.labels?.map((l: any) => l.name || l) || [],
-                    applicants: issue.comments_count || 0,
-                    comments: issue.comments_count || 0,
-                    applicant: undefined,
-                    applicationStatus: 'pending',
-                    discussions: [],
-                    url: issue.url,
-                  };
+                // Convert API issue to Issue type for compatibility
+                // Backend now always provides updated_at_github, so we use updated_at
+                const timeAgoFormatted = formatTimeAgo(issue.updated_at);
 
-                  return (
-                    <IssueCard
-                      key={`${issue.projectId}-${issue.github_issue_id}`}
-                      id={issue.github_issue_id.toString()}
-                      number={`#${issue.number}`}
-                      title={issue.title}
-                      repository={issue.projectName}
-                      applicants={issue.comments_count || 0}
-                      author={{
-                        name: issue.author_login,
-                        avatar: `https://github.com/${issue.author_login}.png?size=40`
-                      }}
-                      timeAgo={timeAgoFormatted}
-                      tags={issue.labels?.map((l: any) => l.name || l) || []}
-                      isSelected={selectedIssue?.id === issue.github_issue_id.toString()}
-                      onClick={() => {
-                        setSelectedIssue(issueForCard);
-                        setSelectedIssueFromAPI(issue);
-                      }}
-                      showTags={true}
-                    />
-                  );
-                })}
+                const issueForCard: Issue = {
+                  id: issue.github_issue_id.toString(),
+                  number: issue.number, // Store the issue number
+                  title: issue.title,
+                  repository: issue.projectName,
+                  repo: issue.projectName,
+                  user: issue.author_login,
+                  timeAgo: timeAgoFormatted,
+                  tags: issue.labels?.map((l: any) => l.name || l) || [],
+                  applicants: issue.comments_count || 0,
+                  comments: issue.comments_count || 0,
+                  applicant: undefined,
+                  applicationStatus: 'pending',
+                  discussions: [],
+                  url: issue.url,
+                };
+
+                return (
+                  <IssueCard
+                    key={`${issue.projectId}-${issue.github_issue_id}`}
+                    id={issue.github_issue_id.toString()}
+                    number={`#${issue.number}`}
+                    title={issue.title}
+                    repository={issue.projectName}
+                    applicants={issue.comments_count || 0}
+                    author={{
+                      name: issue.author_login,
+                      avatar: `https://github.com/${issue.author_login}.png?size=40`
+                    }}
+                    timeAgo={timeAgoFormatted}
+                    tags={issue.labels?.map((l: any) => l.name || l) || []}
+                    isSelected={selectedIssue?.id === issue.github_issue_id.toString()}
+                    onClick={() => {
+                      setSelectedIssue(issueForCard);
+                      setSelectedIssueFromAPI(issue);
+                    }}
+                    showTags={true}
+                  />
+                );
+              })}
 
               {/* Issues Count */}
-              <div className={`text-center py-2 text-[12px] font-semibold transition-colors ${
-                isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
-              }`}>
+              <div className={`text-center py-2 text-[12px] font-semibold transition-colors ${isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
+                }`}>
                 {visibleIssues.length} issue{visibleIssues.length !== 1 ? 's' : ''}
               </div>
             </>
@@ -526,11 +573,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
       </div>
 
       {/* Right Content Area - Issue Detail or Placeholder */}
-      <div className={`flex-1 backdrop-blur-[40px] rounded-[24px] border shadow-[0_8px_32px_rgba(0,0,0,0.08)] relative overflow-y-auto scrollbar-custom transition-colors ${
-        isDark
-          ? 'bg-[#2d2820]/[0.4] border-white/10'
-          : 'bg-white/[0.12] border-white/20'
-      }`}>
+      <div className={`flex-1 backdrop-blur-[40px] rounded-[24px] border shadow-[0_8px_32px_rgba(0,0,0,0.08)] relative overflow-y-auto scrollbar-custom transition-colors ${isDark
+        ? 'bg-[#2d2820]/[0.4] border-white/10'
+        : 'bg-white/[0.12] border-white/20'
+        }`}>
         {!selectedIssue ? (
           <EmptyIssueState issueCount={visibleIssues.length} />
         ) : (
@@ -539,22 +585,19 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
             <div className="flex items-start justify-between mb-6">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-3">
-                  <span className={`text-[24px] font-bold transition-colors ${
-                    isDark ? 'text-[#c9983a]' : 'text-[#8b6f3a]'
-                  }`}>#{selectedIssue.number || selectedIssue.id}</span>
-                  <h1 className={`text-[24px] font-bold transition-colors ${
-                    isDark ? 'text-[#f5f5f5]' : 'text-[#2d2820]'
-                  }`}>
+                  <span className={`text-[24px] font-bold transition-colors ${isDark ? 'text-[#c9983a]' : 'text-[#8b6f3a]'
+                    }`}>#{selectedIssue.number || selectedIssue.id}</span>
+                  <h1 className={`text-[24px] font-bold transition-colors ${isDark ? 'text-[#f5f5f5]' : 'text-[#2d2820]'
+                    }`}>
                     {selectedIssue.title}
                   </h1>
                 </div>
 
                 <div className="flex items-center gap-3 mb-4">
-                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-[8px] border transition-colors ${
-                    isDark 
-                      ? 'bg-[#c9983a]/20 border-[#c9983a]/30' 
-                      : 'bg-[#8b6f3a]/15 border-[#8b6f3a]/30'
-                  }`}>
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-[8px] border transition-colors ${isDark
+                    ? 'bg-[#c9983a]/20 border-[#c9983a]/30'
+                    : 'bg-[#8b6f3a]/15 border-[#8b6f3a]/30'
+                    }`}>
                     {failedAvatars.has(getGitHubAvatar(selectedIssue.user, 16)) ? (
                       <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#c9983a]/30 to-[#d4af37]/20 border border-[#c9983a]/40" />
                     ) : (
@@ -565,9 +608,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                         onError={() => setFailedAvatars(prev => new Set(prev).add(getGitHubAvatar(selectedIssue.user, 16)))}
                       />
                     )}
-                    <span className={`text-[12px] font-bold transition-colors ${
-                      isDark ? 'text-[#c9983a]' : 'text-[#8b6f3a]'
-                    }`}>{selectedIssue.user}</span>
+                    <span className={`text-[12px] font-bold transition-colors ${isDark ? 'text-[#c9983a]' : 'text-[#8b6f3a]'
+                      }`}>{selectedIssue.user}</span>
                   </div>
                   <span className={`text-[13px] transition-colors ${isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'}`}>
                     opened {selectedIssue.timeAgo}
@@ -577,9 +619,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                       href={selectedIssue.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`flex items-center gap-1 text-[13px] font-semibold hover:underline transition-colors ${
-                        isDark ? 'text-[#c9983a]' : 'text-[#8b6f3a]'
-                      }`}
+                      className={`flex items-center gap-1 text-[13px] font-semibold hover:underline transition-colors ${isDark ? 'text-[#c9983a]' : 'text-[#8b6f3a]'
+                        }`}
                     >
                       View on GitHub
                       <ExternalLink className="w-3 h-3" />
@@ -591,9 +632,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                   {selectedIssue.tags?.map((tag: string, idx: number) => (
                     <span
                       key={idx}
-                      className={`px-3 py-1.5 rounded-[8px] text-[12px] font-bold backdrop-blur-[20px] border border-white/25 transition-colors ${
-                        isDark ? 'bg-white/[0.08] text-[#d4d4d4]' : 'bg-white/[0.08] text-[#4a3f2f]'
-                      }`}
+                      className={`px-3 py-1.5 rounded-[8px] text-[12px] font-bold backdrop-blur-[20px] border border-white/25 transition-colors ${isDark ? 'bg-white/[0.08] text-[#d4d4d4]' : 'bg-white/[0.08] text-[#4a3f2f]'
+                        }`}
                     >
                       {tag}
                     </span>
@@ -603,9 +643,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
               <button
                 onClick={() => setSelectedIssue(null)}
-                className={`p-2 rounded-[10px] backdrop-blur-[20px] border border-white/25 hover:bg-white/[0.2] transition-all ${
-                  isDark ? 'bg-white/[0.08] text-[#f5f5f5]' : 'bg-white/[0.08] text-[#2d2820]'
-                }`}
+                className={`p-2 rounded-[10px] backdrop-blur-[20px] border border-white/25 hover:bg-white/[0.2] transition-all ${isDark ? 'bg-white/[0.08] text-[#f5f5f5]' : 'bg-white/[0.08] text-[#2d2820]'
+                  }`}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -615,25 +654,23 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
             <div className="flex items-center gap-2 mb-6 border-b border-white/20 pb-4">
               <button
                 onClick={() => setIssueDetailTab('applications')}
-                className={`px-4 py-2 rounded-t-[10px] text-[14px] font-semibold transition-all ${
-                  issueDetailTab === 'applications'
-                    ? 'bg-[#c9983a] text-white'
-                    : isDark
-                      ? 'text-[#d4d4d4] hover:bg-white/[0.05]'
-                      : 'text-[#7a6b5a] hover:bg-white/[0.05]'
-                }`}
+                className={`px-4 py-2 rounded-t-[10px] text-[14px] font-semibold transition-all ${issueDetailTab === 'applications'
+                  ? 'bg-[#c9983a] text-white'
+                  : isDark
+                    ? 'text-[#d4d4d4] hover:bg-white/[0.05]'
+                    : 'text-[#7a6b5a] hover:bg-white/[0.05]'
+                  }`}
               >
                 Applications {selectedIssue.applicants > 0 && `(${selectedIssue.applicants})`}
               </button>
               <button
                 onClick={() => setIssueDetailTab('discussions')}
-                className={`px-4 py-2 rounded-t-[10px] text-[14px] font-semibold transition-all ${
-                  issueDetailTab === 'discussions'
-                    ? 'bg-[#c9983a] text-white'
-                    : isDark
-                      ? 'text-[#d4d4d4] hover:bg-white/[0.05]'
-                      : 'text-[#7a6b5a] hover:bg-white/[0.05]'
-                }`}
+                className={`px-4 py-2 rounded-t-[10px] text-[14px] font-semibold transition-all ${issueDetailTab === 'discussions'
+                  ? 'bg-[#c9983a] text-white'
+                  : isDark
+                    ? 'text-[#d4d4d4] hover:bg-white/[0.05]'
+                    : 'text-[#7a6b5a] hover:bg-white/[0.05]'
+                  }`}
               >
                 Discussions
               </button>
@@ -652,9 +689,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                     const canApply = isOpen && unassigned && notAuthor;
 
                     return (
-                      <div className={`mb-6 rounded-[16px] border p-5 transition-colors ${
-                        isDark ? 'bg-white/[0.08] border-white/10' : 'bg-white/[0.15] border-white/25'
-                      }`}>
+                      <div className={`mb-6 rounded-[16px] border p-5 transition-colors ${isDark ? 'bg-white/[0.08] border-white/10' : 'bg-white/[0.15] border-white/25'
+                        }`}>
                         <div className={`text-[14px] font-bold mb-2 ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'}`}>
                           Apply for this issue
                         </div>
@@ -676,11 +712,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                               value={applicationDraft}
                               onChange={(e) => setApplicationDraft(e.target.value)}
                               placeholder="Write your application message…"
-                              className={`w-full min-h-[110px] rounded-[12px] border px-4 py-3 text-[13px] outline-none transition-colors ${
-                                isDark
-                                  ? 'bg-white/[0.06] border-white/15 text-[#e8dfd0] placeholder:text-[#b8a898]/60'
-                                  : 'bg-white/[0.25] border-white/30 text-[#2d2820] placeholder:text-[#7a6b5a]/70'
-                              }`}
+                              className={`w-full min-h-[110px] rounded-[12px] border px-4 py-3 text-[13px] outline-none transition-colors ${isDark
+                                ? 'bg-white/[0.06] border-white/15 text-[#e8dfd0] placeholder:text-[#b8a898]/60'
+                                : 'bg-white/[0.25] border-white/30 text-[#2d2820] placeholder:text-[#7a6b5a]/70'
+                                }`}
                             />
                             {applicationError && (
                               <div className="mt-2 text-[12px] font-semibold text-red-400">
@@ -725,19 +760,19 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                                       prev.map((it) =>
                                         it.github_issue_id === selectedIssueFromAPI.github_issue_id && it.projectId === selectedIssueFromAPI.projectId
                                           ? {
-                                              ...it,
-                                              comments_count: (it.comments_count || 0) + 1,
-                                              comments: [
-                                                ...(it.comments || []),
-                                                {
-                                                  id: newComment.id,
-                                                  body: newComment.body,
-                                                  user: { login: newComment.user.login },
-                                                  created_at: newComment.created_at,
-                                                  updated_at: newComment.updated_at,
-                                                } as any,
-                                              ],
-                                            }
+                                            ...it,
+                                            comments_count: (it.comments_count || 0) + 1,
+                                            comments: [
+                                              ...(it.comments || []),
+                                              {
+                                                id: newComment.id,
+                                                body: newComment.body,
+                                                user: { login: newComment.user.login },
+                                                created_at: newComment.created_at,
+                                                updated_at: newComment.updated_at,
+                                              } as any,
+                                            ],
+                                          }
                                           : it
                                       )
                                     );
@@ -758,15 +793,13 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                                     setIsSubmittingApplication(false);
                                   }
                                 }}
-                                className={`px-5 py-2 rounded-[10px] text-[12px] font-semibold transition-all border ${
-                                  isSubmittingApplication
-                                    ? 'opacity-70 cursor-not-allowed'
-                                    : 'hover:scale-[1.02]'
-                                } ${
-                                  isDark
+                                className={`px-5 py-2 rounded-[10px] text-[12px] font-semibold transition-all border ${isSubmittingApplication
+                                  ? 'opacity-70 cursor-not-allowed'
+                                  : 'hover:scale-[1.02]'
+                                  } ${isDark
                                     ? 'bg-gradient-to-br from-[#c9983a] to-[#a67c2e] border-white/10 text-white'
                                     : 'bg-gradient-to-br from-[#c9983a] to-[#a67c2e] border-white/10 text-white'
-                                }`}
+                                  }`}
                               >
                                 {isSubmittingApplication ? 'Submitting…' : 'Submit application'}
                               </button>
@@ -789,12 +822,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                         </div>
                       </div>
                     </div>
-                    <h3 className={`text-[18px] font-bold mb-2 transition-colors ${
-                      isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                    }`}>No applications yet</h3>
-                    <p className={`text-[14px] max-w-sm mx-auto leading-relaxed transition-colors ${
-                      isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                    }`}>
+                    <h3 className={`text-[18px] font-bold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                      }`}>No applications yet</h3>
+                    <p className={`text-[14px] max-w-sm mx-auto leading-relaxed transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                      }`}>
                       This issue is open and waiting for contributors to apply.
                       Applications will appear here once submitted.
                     </p>
@@ -805,183 +836,159 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                   <div className="space-y-4">
                     {applicationData.applications.map((application) => {
                       const isExpanded = expandedApplications[application.id] || false;
-                      
+
                       return (
-                      <div
-                        key={application.id}
-                        className={`backdrop-blur-[25px] rounded-[16px] border p-6 transition-colors ${
-                          isDark ? 'bg-white/[0.15] border-white/25' : 'bg-white/[0.15] border-white/25'
-                        }`}
-                      >
-                        {/* User Header - Always Visible */}
-                        <div className="flex items-center justify-between">
-                          <button
-                            onClick={handleProfileClick}
-                            className="flex items-center gap-3 hover:bg-white/10 -m-2 p-2 rounded-[12px] transition-all group/user"
-                          >
-                            {failedAvatars.has(application.author.avatar) ? (
-                              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#c9983a] to-[#d4af37] flex items-center justify-center shadow-[0_4px_12px_rgba(201,152,58,0.3)]">
-                                <span className="text-[16px] font-bold text-white">
-                                  {application.author.name.substring(0, 2).toUpperCase()}
-                                </span>
-                              </div>
-                            ) : (
-                              <img
-                                src={application.author.avatar}
-                                alt={application.author.name}
-                                className="w-12 h-12 rounded-full border-2 border-[#c9983a]/30 shadow-[0_4px_12px_rgba(201,152,58,0.3)]"
-                                onError={() => setFailedAvatars(prev => new Set(prev).add(application.author.avatar))}
-                              />
-                            )}
-                            <div className="text-left">
-                              <h4 className={`text-[15px] font-bold transition-colors ${
-                                isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                              } group-hover/user:text-[#c9983a]`}>
-                                {application.author.name}
-                              </h4>
-                              <p className={`text-[12px] transition-colors ${
-                                isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                              }`}>Applied - {application.timeAgo}</p>
-                            </div>
-                            <ExternalLink className="w-4 h-4 text-[#7a6b5a] ml-auto opacity-0 group-hover/user:opacity-100 transition-opacity" />
-                          </button>
-                          
-                          {/* Dropdown Button */}
-                          <button
-                            onClick={() => setExpandedApplications(prev => ({
-                              ...prev,
-                              [application.id]: !prev[application.id]
-                            }))}
-                            className={`p-2 rounded-[8px] hover:bg-white/10 transition-all ${
-                              isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                        <div
+                          key={application.id}
+                          className={`backdrop-blur-[25px] rounded-[16px] border p-6 transition-colors ${isDark ? 'bg-white/[0.15] border-white/25' : 'bg-white/[0.15] border-white/25'
                             }`}
-                          >
-                            <ChevronDown className={`w-5 h-5 transition-transform duration-300 ${
-                              isExpanded ? 'rotate-180' : ''
-                            }`} />
-                          </button>
-                        </div>
-
-                        {/* Expanded Content */}
-                        {isExpanded && (
-                          <div className="mt-5 space-y-5">
-                            {/* Profile Stats Grid */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className={`backdrop-blur-[20px] rounded-[12px] border border-[#c9983a]/20 p-3 transition-colors ${
-                                isDark ? 'bg-white/[0.12]' : 'bg-white/[0.12]'
-                              }`}>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <Award className={`w-4 h-4 transition-colors ${
-                                    isDark ? 'text-[#c9983a]' : 'text-[#c9983a]'
-                                  }`} />
-                                  <span className={`text-[20px] font-bold transition-colors ${
-                                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                                  }`}>{application.contributions}</span>
+                        >
+                          {/* User Header - Always Visible */}
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={handleProfileClick}
+                              className="flex items-center gap-3 hover:bg-white/10 -m-2 p-2 rounded-[12px] transition-all group/user"
+                            >
+                              {failedAvatars.has(application.author.avatar) ? (
+                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#c9983a] to-[#d4af37] flex items-center justify-center shadow-[0_4px_12px_rgba(201,152,58,0.3)]">
+                                  <span className="text-[16px] font-bold text-white">
+                                    {application.author.name.substring(0, 2).toUpperCase()}
+                                  </span>
                                 </div>
-                                <p className={`text-[11px] font-semibold uppercase tracking-wide transition-colors ${
-                                  isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                                }`}>Contributions</p>
-                              </div>
-                              <div className={`backdrop-blur-[20px] rounded-[12px] border border-[#c9983a]/20 p-3 transition-colors ${
-                                isDark ? 'bg-white/[0.12]' : 'bg-white/[0.12]'
-                              }`}>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <Award className={`w-4 h-4 transition-colors ${
-                                    isDark ? 'text-[#c9983a]' : 'text-[#c9983a]'
-                                  }`} />
-                                  <span className={`text-[20px] font-bold transition-colors ${
-                                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                                  }`}>{application.rewards}</span>
-                                </div>
-                                <p className={`text-[11px] font-semibold uppercase tracking-wide transition-colors ${
-                                  isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                                }`}>Rewards</p>
-                              </div>
-                            </div>
-
-                            {/* Additional Profile Info */}
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <Users className={`w-4 h-4 transition-colors ${
-                                  isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                                }`} />
-                                <span className={`text-[13px] transition-colors ${
-                                  isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                                }`}>
-                                  Contributor on{' '}
-                                  <span className={`font-bold transition-colors ${
-                                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                                  }`}>{application.projectsContributed}</span>
-                                  {' '}projects
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Star className={`w-4 h-4 transition-colors ${
-                                  isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                                }`} />
-                                <span className={`text-[13px] transition-colors ${
-                                  isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                                }`}>
-                                  Lead{' '}
-                                  <span className={`font-bold transition-colors ${
-                                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                                  }`}>{application.projectsLead}</span>
-                                  {' '}projects
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Message */}
-                            <div className={`p-4 rounded-[12px] border transition-colors ${
-                              isDark 
-                                ? 'bg-white/20 border-white/30' 
-                                : 'bg-white/20 border-white/30'
-                            }`}>
-                              <p className={`text-[13px] leading-relaxed transition-colors ${
-                                isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                              }`}>
-                                {application.message}
-                              </p>
-                            </div>
-
-                            {/* Status & Action Buttons */}
-                            <div className="flex items-center justify-between">
-                              {selectedIssue.applicationStatus === 'assigned' ? (
-                                <>
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#c9983a] to-[#d4af37] flex items-center justify-center">
-                                      <CheckCircle className="w-3 h-3 text-white" strokeWidth={3} />
-                                    </div>
-                                    <span className={`text-[13px] font-bold transition-colors ${
-                                      isDark ? 'text-[#c9983a]' : 'text-[#c9983a]'
-                                    }`}>Assigned</span>
-                                  </div>
-                                  <button className={`px-4 py-2 rounded-[8px] border text-[13px] font-semibold transition-all ${
-                                    isDark
-                                      ? 'bg-white/30 hover:bg-white/50 border-white/40 hover:border-[#c9983a]/40 text-[#e8dfd0] hover:text-[#c9983a]'
-                                      : 'bg-white/30 hover:bg-white/50 border-white/40 hover:border-[#c9983a]/40 text-[#2d2820] hover:text-[#c9983a]'
-                                  }`}>
-                                    Unassign
-                                  </button>
-                                </>
                               ) : (
-                                <>
-                                  <button className={`flex-1 px-4 py-2 rounded-[8px] border text-[13px] font-semibold transition-all mr-2 ${
-                                    isDark
+                                <img
+                                  src={application.author.avatar}
+                                  alt={application.author.name}
+                                  className="w-12 h-12 rounded-full border-2 border-[#c9983a]/30 shadow-[0_4px_12px_rgba(201,152,58,0.3)]"
+                                  onError={() => setFailedAvatars(prev => new Set(prev).add(application.author.avatar))}
+                                />
+                              )}
+                              <div className="text-left">
+                                <h4 className={`text-[15px] font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                  } group-hover/user:text-[#c9983a]`}>
+                                  {application.author.name}
+                                </h4>
+                                <p className={`text-[12px] transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                  }`}>Applied - {application.timeAgo}</p>
+                              </div>
+                              <ExternalLink className="w-4 h-4 text-[#7a6b5a] ml-auto opacity-0 group-hover/user:opacity-100 transition-opacity" />
+                            </button>
+
+                            {/* Dropdown Button */}
+                            <button
+                              onClick={() => setExpandedApplications(prev => ({
+                                ...prev,
+                                [application.id]: !prev[application.id]
+                              }))}
+                              className={`p-2 rounded-[8px] hover:bg-white/10 transition-all ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                }`}
+                            >
+                              <ChevronDown className={`w-5 h-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''
+                                }`} />
+                            </button>
+                          </div>
+
+                          {/* Expanded Content */}
+                          {isExpanded && (
+                            <div className="mt-5 space-y-5">
+                              {/* Profile Stats Grid */}
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className={`backdrop-blur-[20px] rounded-[12px] border border-[#c9983a]/20 p-3 transition-colors ${isDark ? 'bg-white/[0.12]' : 'bg-white/[0.12]'
+                                  }`}>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <Award className={`w-4 h-4 transition-colors ${isDark ? 'text-[#c9983a]' : 'text-[#c9983a]'
+                                      }`} />
+                                    <span className={`text-[20px] font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                      }`}>{application.contributions}</span>
+                                  </div>
+                                  <p className={`text-[11px] font-semibold uppercase tracking-wide transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                    }`}>Contributions</p>
+                                </div>
+                                <div className={`backdrop-blur-[20px] rounded-[12px] border border-[#c9983a]/20 p-3 transition-colors ${isDark ? 'bg-white/[0.12]' : 'bg-white/[0.12]'
+                                  }`}>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <Award className={`w-4 h-4 transition-colors ${isDark ? 'text-[#c9983a]' : 'text-[#c9983a]'
+                                      }`} />
+                                    <span className={`text-[20px] font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                      }`}>{application.rewards}</span>
+                                  </div>
+                                  <p className={`text-[11px] font-semibold uppercase tracking-wide transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                    }`}>Rewards</p>
+                                </div>
+                              </div>
+
+                              {/* Additional Profile Info */}
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Users className={`w-4 h-4 transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                    }`} />
+                                  <span className={`text-[13px] transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                    }`}>
+                                    Contributor on{' '}
+                                    <span className={`font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                      }`}>{application.projectsContributed}</span>
+                                    {' '}projects
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Star className={`w-4 h-4 transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                    }`} />
+                                  <span className={`text-[13px] transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                                    }`}>
+                                    Lead{' '}
+                                    <span className={`font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                      }`}>{application.projectsLead}</span>
+                                    {' '}projects
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Message */}
+                              <div className={`p-4 rounded-[12px] border transition-colors ${isDark
+                                ? 'bg-white/20 border-white/30'
+                                : 'bg-white/20 border-white/30'
+                                }`}>
+                                <p className={`text-[13px] leading-relaxed transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                                  }`}>
+                                  {application.message}
+                                </p>
+                              </div>
+
+                              {/* Status & Action Buttons */}
+                              <div className="flex items-center justify-between">
+                                {selectedIssue.applicationStatus === 'assigned' ? (
+                                  <>
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#c9983a] to-[#d4af37] flex items-center justify-center">
+                                        <CheckCircle className="w-3 h-3 text-white" strokeWidth={3} />
+                                      </div>
+                                      <span className={`text-[13px] font-bold transition-colors ${isDark ? 'text-[#c9983a]' : 'text-[#c9983a]'
+                                        }`}>Assigned</span>
+                                    </div>
+                                    <button className={`px-4 py-2 rounded-[8px] border text-[13px] font-semibold transition-all ${isDark
                                       ? 'bg-white/30 hover:bg-white/50 border-white/40 hover:border-[#c9983a]/40 text-[#e8dfd0] hover:text-[#c9983a]'
                                       : 'bg-white/30 hover:bg-white/50 border-white/40 hover:border-[#c9983a]/40 text-[#2d2820] hover:text-[#c9983a]'
-                                  }`}>
-                                    Reject
-                                  </button>
-                                  <button className="flex-1 px-4 py-2 rounded-[8px] bg-gradient-to-br from-[#c9983a]/30 to-[#d4af37]/25 border border-[#c9983a]/40 text-[13px] font-semibold text-[#2d2820] hover:from-[#c9983a]/40 hover:to-[#d4af37]/35 hover:shadow-[0_4px_16px_rgba(201,152,58,0.3)] transition-all">
-                                    Assign
-                                  </button>
-                                </>
-                              )}
+                                      }`}>
+                                      Unassign
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button className={`flex-1 px-4 py-2 rounded-[8px] border text-[13px] font-semibold transition-all mr-2 ${isDark
+                                      ? 'bg-white/30 hover:bg-white/50 border-white/40 hover:border-[#c9983a]/40 text-[#e8dfd0] hover:text-[#c9983a]'
+                                      : 'bg-white/30 hover:bg-white/50 border-white/40 hover:border-[#c9983a]/40 text-[#2d2820] hover:text-[#c9983a]'
+                                      }`}>
+                                      Reject
+                                    </button>
+                                    <button className="flex-1 px-4 py-2 rounded-[8px] bg-gradient-to-br from-[#c9983a]/30 to-[#d4af37]/25 border border-[#c9983a]/40 text-[13px] font-semibold text-[#2d2820] hover:from-[#c9983a]/40 hover:to-[#d4af37]/35 hover:shadow-[0_4px_16px_rgba(201,152,58,0.3)] transition-all">
+                                      Assign
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -993,17 +1000,15 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
               <div className="space-y-4">
                 {/* Issue description */}
                 {selectedIssueFromAPI?.description && (
-                  <div className={`backdrop-blur-[25px] rounded-[16px] border p-5 transition-colors ${
-                    isDark
-                      ? 'bg-white/[0.08] border-white/10'
-                      : 'bg-white/[0.15] border-white/25'
-                  }`}>
+                  <div className={`backdrop-blur-[25px] rounded-[16px] border p-5 transition-colors ${isDark
+                    ? 'bg-white/[0.08] border-white/10'
+                    : 'bg-white/[0.15] border-white/25'
+                    }`}>
                     <div className={`text-[12px] font-bold mb-2 ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'}`}>
                       Description
                     </div>
-                    <div className={`text-[14px] leading-relaxed whitespace-pre-wrap transition-colors ${
-                      isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                    }`}>
+                    <div className={`text-[14px] leading-relaxed whitespace-pre-wrap transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                      }`}>
                       {selectedIssueFromAPI.description}
                     </div>
                   </div>
@@ -1012,11 +1017,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                   applicationData.discussions.map((discussion) => (
                     <div
                       key={discussion.id}
-                      className={`backdrop-blur-[25px] rounded-[16px] border p-5 transition-colors ${
-                        isDark
-                          ? 'bg-white/[0.08] border-white/10'
-                          : 'bg-white/[0.15] border-white/25'
-                      }`}
+                      className={`backdrop-blur-[25px] rounded-[16px] border p-5 transition-colors ${isDark
+                        ? 'bg-white/[0.08] border-white/10'
+                        : 'bg-white/[0.15] border-white/25'
+                        }`}
                     >
                       <div className="flex items-center gap-3 mb-3">
                         {failedAvatars.has(getGitHubAvatar(discussion.user, 32)) ? (
@@ -1035,21 +1039,19 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                         )}
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className={`text-[14px] font-bold transition-colors ${
-                              isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                            }`}>{discussion.user}</span>
+                            <span className={`text-[14px] font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                              }`}>{discussion.user}</span>
                             {discussion.isAuthor && (
                               <span className="px-2 py-0.5 rounded-[4px] bg-[#c9983a]/20 border border-[#c9983a]/30 text-[10px] font-bold text-[#c9983a]">
                                 AUTHOR
                               </span>
                             )}
                           </div>
-                          <span className={`text-[12px] transition-colors ${
-                            isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
-                          }`}>{discussion.timeAgo}</span>
+                          <span className={`text-[12px] transition-colors ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'
+                            }`}>{discussion.timeAgo}</span>
                         </div>
                       </div>
-                      
+
                       {discussion.appliedForContribution && (
                         <div className="mb-3 px-3 py-2 rounded-[8px] bg-[#c9983a]/10 border border-[#c9983a]/20">
                           <span className="text-[12px] font-semibold text-[#c9983a]">
@@ -1058,23 +1060,19 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                         </div>
                       )}
 
-                      <div className={`text-[14px] leading-relaxed whitespace-pre-wrap transition-colors ${
-                        isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                      }`}>
+                      <div className={`text-[14px] leading-relaxed whitespace-pre-wrap transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                        }`}>
                         {discussion.content}
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className={`p-8 rounded-[16px] backdrop-blur-[25px] border text-center min-h-[300px] flex flex-col items-center justify-center ${
-                    isDark ? 'bg-white/[0.08] border-white/10' : 'bg-white/[0.15] border-white/25'
-                  }`}>
-                    <MessageSquare className={`w-12 h-12 mx-auto mb-4 transition-colors ${
-                      isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
-                    }`} />
-                    <p className={`text-[14px] transition-colors ${
-                      isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
+                  <div className={`p-8 rounded-[16px] backdrop-blur-[25px] border text-center min-h-[300px] flex flex-col items-center justify-center ${isDark ? 'bg-white/[0.08] border-white/10' : 'bg-white/[0.15] border-white/25'
                     }`}>
+                    <MessageSquare className={`w-12 h-12 mx-auto mb-4 transition-colors ${isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
+                      }`} />
+                    <p className={`text-[14px] transition-colors ${isDark ? 'text-[#d4d4d4]' : 'text-[#7a6b5a]'
+                      }`}>
                       No discussions yet
                     </p>
                   </div>
@@ -1088,36 +1086,32 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
       {/* Filter Modal */}
       {isFilterModalOpen && (
         <>
-          <div 
+          <div
             ref={filterPopoverRef}
-            className={`fixed z-50 w-[350px] max-h-[calc(100vh-160px)] flex flex-col rounded-[20px] border-2 transition-colors ${
-              isDark
-                ? 'bg-[#3a3228] border-white/30'
-                : 'bg-[#d4c5b0] border-white/40'
-            }`}
+            className={`fixed z-50 w-[350px] max-h-[calc(100vh-160px)] flex flex-col rounded-[20px] border-2 transition-colors ${isDark
+              ? 'bg-[#3a3228] border-white/30'
+              : 'bg-[#d4c5b0] border-white/40'
+              }`}
             style={{ top: filterPopoverPos.top, left: filterPopoverPos.left }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-6 pb-4 flex-shrink-0 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-[12px] flex items-center justify-center shadow-lg border-2 ${
-                  isDark
-                    ? 'bg-gradient-to-br from-[#e8c571]/30 via-[#d4af37]/25 to-[#c9983a]/20 border-[#e8c571]/50'
-                    : 'bg-gradient-to-br from-[#c9983a]/30 via-[#d4af37]/25 to-[#c9983a]/20 border-[#c9983a]/50'
-                }`}>
+                <div className={`w-10 h-10 rounded-[12px] flex items-center justify-center shadow-lg border-2 ${isDark
+                  ? 'bg-gradient-to-br from-[#e8c571]/30 via-[#d4af37]/25 to-[#c9983a]/20 border-[#e8c571]/50'
+                  : 'bg-gradient-to-br from-[#c9983a]/30 via-[#d4af37]/25 to-[#c9983a]/20 border-[#c9983a]/50'
+                  }`}>
                   <Filter className="w-5 h-5 text-white" />
                 </div>
-                <h2 className={`text-[18px] font-bold transition-colors ${
-                  isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                }`}>All Filters</h2>
+                <h2 className={`text-[18px] font-bold transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                  }`}>All Filters</h2>
               </div>
               <button
                 onClick={() => setIsFilterModalOpen(false)}
-                className={`p-2 rounded-[10px] transition-all hover:scale-110 ${
-                  isDark
-                    ? 'hover:bg-white/[0.1] text-[#e8c571] hover:text-[#f5d98a]'
-                    : 'hover:bg-black/[0.05] text-[#8b6f3a] hover:text-[#c9983a]'
-                }`}
+                className={`p-2 rounded-[10px] transition-all hover:scale-110 ${isDark
+                  ? 'hover:bg-white/[0.1] text-[#e8c571] hover:text-[#f5d98a]'
+                  : 'hover:bg-black/[0.05] text-[#8b6f3a] hover:text-[#c9983a]'
+                  }`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1126,16 +1120,14 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
             <div className="flex-1 overflow-y-auto p-6 scrollbar-hide space-y-4">
               {/* Repository */}
               <div>
-                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                  isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                }`}>Repository</h3>
+                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                  }`}>Repository</h3>
 
                 {/* Search Bar */}
-                <div className={`mb-2.5 px-3 py-2 rounded-[8px] border transition-colors ${
-                  isDark
-                    ? 'bg-white/[0.08] border-white/15'
-                    : 'bg-white/[0.15] border-white/25'
-                }`}>
+                <div className={`mb-2.5 px-3 py-2 rounded-[8px] border transition-colors ${isDark
+                  ? 'bg-white/[0.08] border-white/15'
+                  : 'bg-white/[0.15] border-white/25'
+                  }`}>
                   <div className="flex items-center gap-2">
                     <Search className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'}`} />
                     <input
@@ -1143,11 +1135,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                       placeholder="Search repositories"
                       value={repoSearch}
                       onChange={(e) => setRepoSearch(e.target.value)}
-                      className={`flex-1 bg-transparent border-none outline-none text-[12px] placeholder:text-[12px] transition-colors ${
-                        isDark
-                          ? 'text-[#e8dfd0] placeholder-[#b8a898]/60'
-                          : 'text-[#2d2820] placeholder-[#7a6b5a]/60'
-                      }`}
+                      className={`flex-1 bg-transparent border-none outline-none text-[12px] placeholder:text-[12px] transition-colors ${isDark
+                        ? 'text-[#e8dfd0] placeholder-[#b8a898]/60'
+                        : 'text-[#2d2820] placeholder-[#7a6b5a]/60'
+                        }`}
                     />
                   </div>
                 </div>
@@ -1155,13 +1146,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setSelectedFilters(prev => ({ ...prev, repositoryId: null }))}
-                    className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${
-                      !selectedFilters.repositoryId
-                        ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                        : isDark
-                          ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                          : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                    }`}
+                    className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${!selectedFilters.repositoryId
+                      ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                      : isDark
+                        ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                        : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                      }`}
                   >
                     All projects
                   </button>
@@ -1173,13 +1163,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                       <button
                         key={p.id}
                         onClick={() => setSelectedFilters(prev => ({ ...prev, repositoryId: p.id }))}
-                        className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${
-                          selectedFilters.repositoryId === p.id
-                            ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                            : isDark
-                              ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                              : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                        }`}
+                        className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${selectedFilters.repositoryId === p.id
+                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                          : isDark
+                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                          }`}
                       >
                         {p.github_full_name}
                       </button>
@@ -1191,9 +1180,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
               <div className="grid grid-cols-2 gap-3">
                 {/* Status */}
                 <div>
-                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                  }`}>Status</h3>
+                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                    }`}>Status</h3>
                   <div className="flex gap-2">
                     {['Open', 'Closed'].map((status) => (
                       <button
@@ -1202,13 +1190,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                           const value = status === 'Open' ? 'open' : 'closed';
                           setSelectedFilters(prev => ({ ...prev, status: [value] }));
                         }}
-                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${
-                          selectedFilters.status[0] === (status === 'Open' ? 'open' : 'closed')
-                            ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                            : isDark
-                              ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                              : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                        }`}
+                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${selectedFilters.status[0] === (status === 'Open' ? 'open' : 'closed')
+                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                          : isDark
+                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                          }`}
                       >
                         {status}
                       </button>
@@ -1218,9 +1205,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
                 {/* Applicants */}
                 <div>
-                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                  }`}>Applicants</h3>
+                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                    }`}>Applicants</h3>
                   <div className="flex gap-2">
                     {['Yes', 'No'].map((applicant) => (
                       <button
@@ -1232,13 +1218,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                             applicants: prev.applicants[0] === v ? [] : [v]
                           }));
                         }}
-                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${
-                          selectedFilters.applicants[0] === applicant.toLowerCase()
-                            ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                            : isDark
-                              ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                              : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                        }`}
+                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${selectedFilters.applicants[0] === applicant.toLowerCase()
+                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                          : isDark
+                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                          }`}
                       >
                         {applicant}
                       </button>
@@ -1251,9 +1236,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
               <div className="grid grid-cols-2 gap-3">
                 {/* Assignee */}
                 <div>
-                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                  }`}>Assignee</h3>
+                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                    }`}>Assignee</h3>
                   <div className="flex gap-2">
                     {['Yes', 'No'].map((assignee) => (
                       <button
@@ -1265,13 +1249,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                             assignee: prev.assignee[0] === v ? [] : [v]
                           }));
                         }}
-                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${
-                          selectedFilters.assignee[0] === assignee.toLowerCase()
-                            ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                            : isDark
-                              ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                              : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                        }`}
+                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${selectedFilters.assignee[0] === assignee.toLowerCase()
+                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                          : isDark
+                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                          }`}
                       >
                         {assignee}
                       </button>
@@ -1281,9 +1264,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
                 {/* Stale */}
                 <div>
-                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                    isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                  }`}>Stale</h3>
+                  <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                    }`}>Stale</h3>
                   <div className="flex gap-2">
                     {['Yes', 'No'].map((stale) => (
                       <button
@@ -1295,13 +1277,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                             stale: prev.stale[0] === v ? [] : [v]
                           }));
                         }}
-                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${
-                          selectedFilters.stale[0] === stale.toLowerCase()
-                            ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                            : isDark
-                              ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                              : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                        }`}
+                        className={`flex-1 px-2 py-1.5 rounded-[8px] text-[12px] font-semibold transition-all border ${selectedFilters.stale[0] === stale.toLowerCase()
+                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                          : isDark
+                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                          }`}
                       >
                         {stale}
                       </button>
@@ -1312,9 +1293,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
               {/* Categories */}
               <div>
-                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                  isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                }`}>Categories</h3>
+                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                  }`}>Categories</h3>
                 <div className="flex flex-wrap gap-2">
                   {['Blockchain & Cryptocurrencies', 'Cryptography', 'Stellar', 'Web Development'].map((category) => (
                     <button
@@ -1333,13 +1313,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                           }));
                         }
                       }}
-                      className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${
-                        selectedFilters.categories.includes(category.toLowerCase())
-                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                          : isDark
-                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                      }`}
+                      className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${selectedFilters.categories.includes(category.toLowerCase())
+                        ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                        : isDark
+                          ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                          : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                        }`}
                     >
                       {category}
                     </button>
@@ -1349,9 +1328,8 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
               {/* Languages */}
               <div>
-                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                  isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                }`}>Languages</h3>
+                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                  }`}>Languages</h3>
                 <div className="flex flex-wrap gap-2">
                   {['JavaScript', 'Makefile', 'Rust', 'Shell', 'TypeScript'].map((language) => (
                     <button
@@ -1370,13 +1348,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                           }));
                         }
                       }}
-                      className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${
-                        selectedFilters.languages.includes(language.toLowerCase())
-                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                          : isDark
-                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                      }`}
+                      className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${selectedFilters.languages.includes(language.toLowerCase())
+                        ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                        : isDark
+                          ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                          : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                        }`}
                     >
                       {language}
                     </button>
@@ -1386,16 +1363,14 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
 
               {/* Labels */}
               <div>
-                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${
-                  isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                }`}>Labels</h3>
-                
+                <h3 className={`text-[12px] font-semibold mb-2 transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                  }`}>Labels</h3>
+
                 {/* Search Bar */}
-                <div className={`mb-2.5 px-3 py-2 rounded-[8px] border transition-colors ${
-                  isDark
-                    ? 'bg-white/[0.08] border-white/15'
-                    : 'bg-white/[0.15] border-white/25'
-                }`}>
+                <div className={`mb-2.5 px-3 py-2 rounded-[8px] border transition-colors ${isDark
+                  ? 'bg-white/[0.08] border-white/15'
+                  : 'bg-white/[0.15] border-white/25'
+                  }`}>
                   <div className="flex items-center gap-2">
                     <Search className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'}`} />
                     <input
@@ -1403,11 +1378,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                       placeholder="Search"
                       value={labelSearch}
                       onChange={(e) => setLabelSearch(e.target.value)}
-                      className={`flex-1 bg-transparent border-none outline-none text-[12px] placeholder:text-[12px] transition-colors ${
-                        isDark
-                          ? 'text-[#e8dfd0] placeholder-[#b8a898]/60'
-                          : 'text-[#2d2820] placeholder-[#7a6b5a]/60'
-                      }`}
+                      className={`flex-1 bg-transparent border-none outline-none text-[12px] placeholder:text-[12px] transition-colors ${isDark
+                        ? 'text-[#e8dfd0] placeholder-[#b8a898]/60'
+                        : 'text-[#2d2820] placeholder-[#7a6b5a]/60'
+                        }`}
                     />
                   </div>
                 </div>
@@ -1431,13 +1405,12 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                           }));
                         }
                       }}
-                      className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${
-                        selectedFilters.labels.includes(label.toLowerCase())
-                          ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
-                          : isDark
-                            ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
-                            : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
-                      }`}
+                      className={`px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold transition-all border ${selectedFilters.labels.includes(label.toLowerCase())
+                        ? 'bg-[#c9983a]/20 border-[#c9983a] text-[#c9983a]'
+                        : isDark
+                          ? 'bg-white/[0.08] border-white/15 text-[#e8dfd0] hover:bg-white/[0.12]'
+                          : 'bg-white/[0.15] border-white/25 text-[#7a6b5a] hover:bg-white/[0.2]'
+                        }`}
                     >
                       {label}
                     </button>
@@ -1462,11 +1435,10 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                   setLabelSearch('');
                   setRepoSearch('');
                 }}
-                className={`px-4 py-2 rounded-[10px] text-[12px] font-semibold transition-all hover:scale-[1.02] ${
-                  isDark
-                    ? 'text-[#e8dfd0] hover:bg-white/[0.05]'
-                    : 'text-[#7a6b5a] hover:bg-white/[0.1]'
-                }`}
+                className={`px-4 py-2 rounded-[10px] text-[12px] font-semibold transition-all hover:scale-[1.02] ${isDark
+                  ? 'text-[#e8dfd0] hover:bg-white/[0.05]'
+                  : 'text-[#7a6b5a] hover:bg-white/[0.1]'
+                  }`}
               >
                 Clear filters
               </button>

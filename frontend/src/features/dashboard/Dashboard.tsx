@@ -32,6 +32,7 @@ import { BlogPage } from '../blog/pages/BlogPage';
 import { SettingsPage } from '../settings/pages/SettingsPage';
 import { AdminPage } from '../admin/pages/AdminPage';
 import { SearchPage } from './pages/SearchPage';
+import { SettingsTabType } from '../settings/types';
 
 export function Dashboard() {
   const { userRole, logout, login } = useAuth();
