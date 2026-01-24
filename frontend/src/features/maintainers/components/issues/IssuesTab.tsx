@@ -185,60 +185,6 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
         return dateB - dateA;
       });
 
-      // MOCK DATA INJECTION
-      flattenedIssues.push({
-        github_issue_id: 12345,
-        number: 42,
-        state: 'open',
-        title: 'Fix the flux capacitor',
-        description: 'It is not fluxing correctly',
-        author_login: 'martymcfly',
-        assignees: [],
-        labels: [],
-        comments_count: 3,
-        comments: [],
-        url: 'https://github.com/mock-org/mock-repo/issues/42',
-        updated_at: new Date().toISOString(),
-        last_seen_at: new Date().toISOString(),
-        projectName: 'mock-org/mock-repo',
-        projectId: 'mock-p-1',
-      });
-      flattenedIssues.push({
-        github_issue_id: 67890,
-        number: 101,
-        state: 'open',
-        title: 'Add structured logging',
-        description: 'We need better logs',
-        author_login: 'docbrown',
-        assignees: [],
-        labels: [{ name: 'enhancement', color: 'blue' }],
-        comments_count: 1,
-        comments: [],
-        url: 'https://github.com/mock-org/utils/issues/101',
-        updated_at: new Date(Date.now() - 3600000).toISOString(),
-        last_seen_at: new Date(Date.now() - 3600000).toISOString(),
-        projectName: 'mock-org/utils',
-        projectId: 'mock-p-2',
-      });
-      flattenedIssues.push({
-        github_issue_id: 11223,
-        number: 5,
-        state: 'open',
-        title: 'Update documentation',
-        description: 'Docs are outdated',
-        author_login: 'einstein',
-        assignees: [],
-        labels: [{ name: 'documentation', color: 'green' }],
-        comments_count: 0,
-        comments: [],
-        url: 'https://github.com/mock-org/core/issues/5',
-        updated_at: new Date(Date.now() - 86400000).toISOString(),
-        last_seen_at: new Date(Date.now() - 86400000).toISOString(),
-        projectName: 'mock-org/core',
-        projectId: 'mock-p-3',
-      });
-      // END MOCK DATA
-
       setIssues(flattenedIssues);
       setIsLoadingIssues(false);
     } catch (err) {
@@ -1008,10 +954,9 @@ export function IssuesTab({ onNavigate, selectedProjects, onRefresh, initialSele
                     <div className={`text-[12px] font-bold mb-2 ${isDark ? 'text-[#b8a898]' : 'text-[#7a6b5a]'}`}>
                       Description
                     </div>
-                    <div className={`text-[14px] leading-relaxed whitespace-pre-wrap transition-colors ${
-                      isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
-                    }`}>
-                     <RenderMarkdownContent content={selectedIssueFromAPI.description} />
+                    <div className={`text-[14px] leading-relaxed whitespace-pre-wrap transition-colors ${isDark ? 'text-[#e8dfd0]' : 'text-[#2d2820]'
+                      }`}>
+                      <RenderMarkdownContent content={selectedIssueFromAPI.description} />
                     </div>
                   </div>
                 )}
