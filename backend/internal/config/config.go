@@ -109,7 +109,7 @@ func Load() Config {
 
 		TokenEncKeyB64: getEnv("TOKEN_ENC_KEY_B64", ""),
 
-		AdminBootstrapToken: getEnv("ADMIN_BOOTSTRAP_TOKEN", ""),
+		AdminBootstrapToken: strings.TrimSpace(getEnv("ADMIN_BOOTSTRAP_TOKEN", "")),
 
 		DiditAPIKey:        getEnv("DIDIT_API_KEY", ""),
 		DiditWorkflowID:    getEnv("DIDIT_WORKFLOW_ID", ""),

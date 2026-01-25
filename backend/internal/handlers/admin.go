@@ -115,7 +115,9 @@ func (h *AdminHandler) BootstrapAdmin() fiber.Handler {
 		if h.cfg.JWTSecret == "" {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "jwt_not_configured"})
 		}
-		if c.Get("X-Admin-Bootstrap-Token") != h.cfg.AdminBootstrapToken {
+		headerToken := strings.TrimSpace(c.Get("X-Admin-Bootstrap-Token"))
+		configToken := strings.TrimSpace(h.cfg.AdminBootstrapToken)
+		if headerToken != configToken {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid_bootstrap_token"})
 		}
 		sub, _ := c.Locals(auth.LocalUserID).(string)
