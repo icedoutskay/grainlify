@@ -6,25 +6,9 @@ export type UserRole = 'contributor' | 'maintainer' | 'admin' | null;
 export interface User {
   id: string;
   role: string;
-  first_name?: string;
-  last_name?: string;
-  location?: string;
-  website?: string;
-  bio?: string;
-  avatar_url?: string;
-  telegram?: string;
-  linkedin?: string;
-  whatsapp?: string;
-  twitter?: string;
-  discord?: string;
-  github?: {
+  github: {
     login: string;
     avatar_url: string;
-    name?: string;
-    email?: string;
-    location?: string;
-    bio?: string;
-    website?: string;
   };
 }
 
@@ -48,38 +32,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     const token = getAuthToken();
-      console.log('AuthContext - Checking authentication on mount');
-      console.log('AuthContext - Token found:', token ? 'Yes' : 'No');
-      
-      if (token) {
-        try {
-          console.log('AuthContext - Fetching user profile...');
-          const userData = await getCurrentUser();
-          console.log('AuthContext - User profile:', userData);
-          setUser(userData);
-          setUserRole(userData.role as UserRole);
-          setUserId(userData.id);
-          console.log('AuthContext - User authenticated:', { 
-            role: userData.role, 
-            id: userData.id, 
-            githubLogin: userData.github?.login 
-          });
-        } catch (error) {
-          // Token is invalid, remove it
-          console.error('AuthContext - Auth check failed:', error);
-          removeAuthToken();
-          setUser(null);
-          setUserRole(null);
-          setUserId(null);
-        }
-      } else {
-        console.log('AuthContext - No token found, user not authenticated');
+    console.log('AuthContext - Checking authentication on mount');
+    console.log('AuthContext - Token found:', token ? 'Yes' : 'No');
+
+    if (token) {
+      try {
+        console.log('AuthContext - Fetching user profile...');
+        const userData = await getCurrentUser();
+        console.log('AuthContext - User profile:', userData);
+        setUser(userData);
+        setUserRole(userData.role as UserRole);
+        setUserId(userData.id);
+        console.log('AuthContext - User authenticated:', {
+          role: userData.role,
+          id: userData.id,
+          githubLogin: userData.github.login
+        });
+      } catch (error) {
+        // Token is invalid, remove it
+        console.error('AuthContext - Auth check failed:', error);
+        removeAuthToken();
         setUser(null);
         setUserRole(null);
         setUserId(null);
       }
-      setIsLoading(false);
-      console.log('AuthContext - Loading complete');
+    } else {
+      console.log('AuthContext - No token found, user not authenticated');
+      setUser(null);
+      setUserRole(null);
+      setUserId(null);
+    }
+    setIsLoading(false);
+    console.log('AuthContext - Loading complete');
   };
 
   // Check for existing token on mount
@@ -125,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log('AuthContext - login() called with token');
     setAuthToken(token);
     console.log('AuthContext - Token saved to localStorage');
-    
+
     try {
       console.log('AuthContext - Fetching user profile after login...');
       const userData = await getCurrentUser();
@@ -133,11 +117,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(userData);
       setUserRole(userData.role as UserRole);
       setUserId(userData.id);
-      console.log('AuthContext - Login successful:', { 
-        role: userData.role, 
-        id: userData.id, 
+      console.log('AuthContext - Login successful:', {
+        role: userData.role,
+        id: userData.id,
         isAuthenticated: true,
-        githubLogin: userData.github?.login
+        githubLogin: userData.github.login
       });
     } catch (error) {
       console.error('AuthContext - Login failed:', error);
