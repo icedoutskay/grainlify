@@ -95,10 +95,6 @@ use events::{
     emit_funds_refunded, emit_funds_released, BatchFundsLocked, BatchFundsReleased,
     BountyEscrowInitialized, FundsLocked, FundsRefunded, FundsReleased,
 };
-
-// Event symbols for release schedules
-const SCHEDULE_CREATED: soroban_sdk::Symbol = soroban_sdk::symbol_short!("sch_crt");
-const SCHEDULE_RELEASED: soroban_sdk::Symbol = soroban_sdk::symbol_short!("sch_rel");
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env,
     Vec,
@@ -450,28 +446,19 @@ pub enum Error {
 
     /// Returned when caller lacks required authorization for the operation
     Unauthorized = 7,
+    InvalidFeeRate = 8,
+    FeeRecipientNotSet = 9,
+    InvalidBatchSize = 10,
+    BatchSizeMismatch = 11,
+    DuplicateBountyId = 12,
     /// Returned when amount is invalid (zero, negative, or exceeds available)
-    InvalidAmount = 8,
+    InvalidAmount = 13,
     /// Returned when deadline is invalid (in the past or too far in the future)
-    InvalidDeadline = 9,
-    BatchSizeMismatch = 10,
-    DuplicateBountyId = 11,
+    InvalidDeadline = 14,
     /// Returned when contract has insufficient funds for the operation
-    InsufficientFunds = 12,
+    InsufficientFunds = 16,
     /// Returned when refund is attempted without admin approval
-    RefundNotApproved = 13,
-    /// Returned when schedule ID already exists
-    ScheduleExists = 14,
-    /// Returned when schedule not found
-    ScheduleNotFound = 15,
-    /// Returned when schedule timestamp is in the past
-    InvalidScheduleTimestamp = 16,
-    /// Returned when schedule amount exceeds available funds
-    InsufficientScheduledAmount = 17,
-    /// Returned when schedule is already released
-    ScheduleAlreadyReleased = 18,
-    /// Returned when schedule is not yet due for release
-    ScheduleNotDue = 19,
+    RefundNotApproved = 17,
 }
 
 // ============================================================================
@@ -530,91 +517,6 @@ pub struct RefundApproval {
     pub mode: RefundMode,
     pub approved_by: Address,
     pub approved_at: u64,
-}
-
-/// Time-based release schedule for vesting funds.
-///
-/// # Fields
-/// * `schedule_id` - Unique identifier for this schedule
-/// * `amount` - Amount to release (in token's smallest denomination)
-/// * `release_timestamp` - Unix timestamp when funds become available for release
-/// * `recipient` - Address that will receive the funds
-/// * `released` - Whether this schedule has been executed
-/// * `released_at` - Timestamp when the schedule was executed (None if not released)
-/// * `released_by` - Address that triggered the release (None if not released)
-///
-/// # Usage
-/// Used to implement milestone-based payouts and scheduled distributions.
-/// Multiple schedules can be created per bounty for complex vesting patterns.
-///
-/// # Example
-/// ```rust
-/// let schedule = ReleaseSchedule {
-///     schedule_id: 1,
-///     amount: 500_0000000, // 500 tokens
-///     release_timestamp: current_time + (30 * 24 * 60 * 60), // 30 days
-///     recipient: contributor_address,
-///     released: false,
-///     released_at: None,
-///     released_by: None,
-/// };
-/// ```
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReleaseSchedule {
-    pub schedule_id: u64,
-    pub amount: i128,
-    pub release_timestamp: u64,
-    pub recipient: Address,
-    pub released: bool,
-    pub released_at: Option<u64>,
-    pub released_by: Option<Address>,
-}
-
-/// History record for executed release schedules.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReleaseHistory {
-    pub schedule_id: u64,
-    pub bounty_id: u64,
-    pub amount: i128,
-    pub recipient: Address,
-    pub released_at: u64,
-    pub released_by: Address,
-    pub release_type: ReleaseType,
-}
-
-/// Type of release execution.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ReleaseType {
-    Automatic, // Released automatically after timestamp
-    Manual,    // Released manually by authorized party
-}
-
-/// Event emitted when a release schedule is created.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScheduleCreated {
-    pub bounty_id: u64,
-    pub schedule_id: u64,
-    pub amount: i128,
-    pub release_timestamp: u64,
-    pub recipient: Address,
-    pub created_by: Address,
-}
-
-/// Event emitted when a release schedule is executed.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScheduleReleased {
-    pub bounty_id: u64,
-    pub schedule_id: u64,
-    pub amount: i128,
-    pub recipient: Address,
-    pub released_at: u64,
-    pub released_by: Address,
-    pub release_type: ReleaseType,
 }
 
 /// Complete escrow record for a bounty.
@@ -679,15 +581,27 @@ pub struct ReleaseFundsItem {
 const MAX_BATCH_SIZE: u32 = 100;
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfig {
+    pub lock_fee_rate: i128, // Fee rate for lock operations (basis points, e.g., 100 = 1%)
+    pub release_fee_rate: i128, // Fee rate for release operations (basis points)
+    pub fee_recipient: Address, // Address to receive fees
+    pub fee_enabled: bool,   // Global fee enable/disable flag
+}
+
+// Fee rate is stored in basis points (1 basis point = 0.01%)
+// Example: 100 basis points = 1%, 1000 basis points = 10%
+const BASIS_POINTS: i128 = 10_000;
+const MAX_FEE_RATE: i128 = 1_000; // Maximum 10% fee
+
+#[contracttype]
 pub enum DataKey {
     Admin,
     Token,
     Escrow(u64),         // bounty_id
+    FeeConfig,           // Fee configuration
     RefundApproval(u64), // bounty_id -> RefundApproval
     ReentrancyGuard,
-    ReleaseSchedule(u64, u64), // bounty_id, schedule_id -> ReleaseSchedule
-    ReleaseHistory(u64),       // bounty_id -> Vec<ReleaseHistory>
-    NextScheduleId(u64),       // bounty_id -> next schedule_id
 }
 
 // ============================================================================
@@ -754,6 +668,17 @@ impl BountyEscrowContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
 
+        // Initialize fee config with zero fees (disabled by default)
+        let fee_config = FeeConfig {
+            lock_fee_rate: 0,
+            release_fee_rate: 0,
+            fee_recipient: admin.clone(),
+            fee_enabled: false,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeConfig, &fee_config);
+
         // Emit initialization event
         emit_bounty_initialized(
             &env,
@@ -774,6 +699,95 @@ impl BountyEscrowContract {
         Ok(())
     }
 
+    /// Calculate fee amount based on rate (in basis points)
+    fn calculate_fee(amount: i128, fee_rate: i128) -> i128 {
+        if fee_rate == 0 {
+            return 0;
+        }
+        // Fee = (amount * fee_rate) / BASIS_POINTS
+        // Using checked arithmetic to prevent overflow
+        amount
+            .checked_mul(fee_rate)
+            .and_then(|x| x.checked_div(BASIS_POINTS))
+            .unwrap_or(0)
+    }
+
+    /// Get fee configuration (internal helper)
+    fn get_fee_config_internal(env: &Env) -> FeeConfig {
+        env.storage()
+            .instance()
+            .get(&DataKey::FeeConfig)
+            .unwrap_or_else(|| FeeConfig {
+                lock_fee_rate: 0,
+                release_fee_rate: 0,
+                fee_recipient: env.storage().instance().get(&DataKey::Admin).unwrap(),
+                fee_enabled: false,
+            })
+    }
+
+    /// Update fee configuration (admin only)
+    pub fn update_fee_config(
+        env: Env,
+        lock_fee_rate: Option<i128>,
+        release_fee_rate: Option<i128>,
+        fee_recipient: Option<Address>,
+        fee_enabled: Option<bool>,
+    ) -> Result<(), Error> {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            return Err(Error::NotInitialized);
+        }
+
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let mut fee_config = Self::get_fee_config_internal(&env);
+
+        if let Some(rate) = lock_fee_rate {
+            if rate < 0 || rate > MAX_FEE_RATE {
+                return Err(Error::InvalidFeeRate);
+            }
+            fee_config.lock_fee_rate = rate;
+        }
+
+        if let Some(rate) = release_fee_rate {
+            if rate < 0 || rate > MAX_FEE_RATE {
+                return Err(Error::InvalidFeeRate);
+            }
+            fee_config.release_fee_rate = rate;
+        }
+
+        if let Some(recipient) = fee_recipient {
+            fee_config.fee_recipient = recipient;
+        }
+
+        if let Some(enabled) = fee_enabled {
+            fee_config.fee_enabled = enabled;
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeConfig, &fee_config);
+
+        events::emit_fee_config_updated(
+            &env,
+            events::FeeConfigUpdated {
+                lock_fee_rate: fee_config.lock_fee_rate,
+                release_fee_rate: fee_config.release_fee_rate,
+                fee_recipient: fee_config.fee_recipient.clone(),
+                fee_enabled: fee_config.fee_enabled,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Get current fee configuration (view function)
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        Self::get_fee_config_internal(&env)
+    }
+
+    /// Lock funds for a specific bounty.
     // ========================================================================
     // Core Escrow Functions
     // ========================================================================
@@ -880,13 +894,37 @@ impl BountyEscrowContract {
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let client = token::Client::new(&env, &token_addr);
 
-        // Transfer funds from depositor to contract
-        client.transfer(&depositor, &env.current_contract_address(), &amount);
+        // Calculate and collect fee if enabled
+        let fee_config = Self::get_fee_config_internal(&env);
+        let fee_amount = if fee_config.fee_enabled && fee_config.lock_fee_rate > 0 {
+            Self::calculate_fee(amount, fee_config.lock_fee_rate)
+        } else {
+            0
+        };
+        let net_amount = amount - fee_amount;
+
+        // Transfer net amount from depositor to contract
+        client.transfer(&depositor, &env.current_contract_address(), &net_amount);
+
+        // Transfer fee to fee recipient if applicable
+        if fee_amount > 0 {
+            client.transfer(&depositor, &fee_config.fee_recipient, &fee_amount);
+            events::emit_fee_collected(
+                &env,
+                events::FeeCollected {
+                    operation_type: events::FeeOperationType::Lock,
+                    amount: fee_amount,
+                    fee_rate: fee_config.lock_fee_rate,
+                    recipient: fee_config.fee_recipient.clone(),
+                    timestamp: env.ledger().timestamp(),
+                },
+            );
+        }
 
         // Create escrow record
         let escrow = Escrow {
             depositor: depositor.clone(),
-            amount,
+            amount: net_amount, // Store net amount (after fee)
             status: EscrowStatus::Locked,
             deadline,
             refund_history: vec![&env],
@@ -903,7 +941,7 @@ impl BountyEscrowContract {
             &env,
             FundsLocked {
                 bounty_id,
-                amount,
+                amount: net_amount, // Emit net amount (after fee)
                 depositor: depositor.clone(),
                 deadline,
             },
@@ -1024,19 +1062,50 @@ impl BountyEscrowContract {
             .persistent()
             .set(&DataKey::Escrow(bounty_id), &escrow);
 
-        // Transfer funds to contributor
-        client.transfer(
-            &env.current_contract_address(),
-            &contributor,
-            &escrow.amount,
-        );
+        // Calculate and collect fee if enabled
+        let fee_config = Self::get_fee_config_internal(&env);
+        let fee_amount = if fee_config.fee_enabled && fee_config.release_fee_rate > 0 {
+            Self::calculate_fee(escrow.amount, fee_config.release_fee_rate)
+        } else {
+            0
+        };
+        let net_amount = escrow.amount - fee_amount;
+
+        // Transfer net amount to contributor
+        client.transfer(&env.current_contract_address(), &contributor, &net_amount);
+
+        // Transfer fee to fee recipient if applicable
+        if fee_amount > 0 {
+            client.transfer(
+                &env.current_contract_address(),
+                &fee_config.fee_recipient,
+                &fee_amount,
+            );
+            events::emit_fee_collected(
+                &env,
+                events::FeeCollected {
+                    operation_type: events::FeeOperationType::Release,
+                    amount: fee_amount,
+                    fee_rate: fee_config.release_fee_rate,
+                    recipient: fee_config.fee_recipient.clone(),
+                    timestamp: env.ledger().timestamp(),
+                },
+            );
+        }
+
+        // Update escrow state - mark as released and set remaining_amount to 0
+        escrow.status = EscrowStatus::Released;
+        escrow.remaining_amount = 0;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(bounty_id), &escrow);
 
         // Emit release event
         emit_funds_released(
             &env,
             FundsReleased {
                 bounty_id,
-                amount: escrow.amount,
+                amount: net_amount, // Emit net amount (after fee)
                 recipient: contributor.clone(),
                 timestamp: env.ledger().timestamp(),
             },
@@ -1117,14 +1186,6 @@ impl BountyEscrowContract {
     ) -> Result<(), Error> {
         let start = env.ledger().timestamp();
 
-        // Reentrancy guard – protect the whole refund flow including external token calls.
-        if env.storage().instance().has(&DataKey::ReentrancyGuard) {
-            panic!("Reentrancy detected");
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
-
         if !env.storage().persistent().has(&DataKey::Escrow(bounty_id)) {
             let caller = env.current_contract_address();
             monitoring::track_operation(&env, symbol_short!("refund"), caller, false);
@@ -1142,7 +1203,6 @@ impl BountyEscrowContract {
 
         if escrow.status != EscrowStatus::Locked && escrow.status != EscrowStatus::PartiallyRefunded
         {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
             return Err(Error::FundsNotLocked);
         }
 
@@ -1159,7 +1219,6 @@ impl BountyEscrowContract {
                 refund_amount = escrow.remaining_amount;
                 refund_recipient = escrow.depositor.clone();
                 if is_before_deadline {
-                    env.storage().instance().remove(&DataKey::ReentrancyGuard);
                     return Err(Error::DeadlineNotPassed);
                 }
             }
@@ -1167,25 +1226,12 @@ impl BountyEscrowContract {
                 refund_amount = amount.unwrap_or(escrow.remaining_amount);
                 refund_recipient = escrow.depositor.clone();
                 if is_before_deadline {
-                    env.storage().instance().remove(&DataKey::ReentrancyGuard);
                     return Err(Error::DeadlineNotPassed);
                 }
             }
             RefundMode::Custom => {
-                refund_amount = match amount {
-                    Some(a) => a,
-                    None => {
-                        env.storage().instance().remove(&DataKey::ReentrancyGuard);
-                        return Err(Error::InvalidAmount);
-                    }
-                };
-                refund_recipient = match recipient {
-                    Some(r) => r,
-                    None => {
-                        env.storage().instance().remove(&DataKey::ReentrancyGuard);
-                        return Err(Error::InvalidAmount);
-                    }
-                };
+                refund_amount = amount.ok_or(Error::InvalidAmount)?;
+                refund_recipient = recipient.ok_or(Error::InvalidAmount)?;
 
                 // Custom refunds before deadline require admin approval
                 if is_before_deadline {
@@ -1194,7 +1240,6 @@ impl BountyEscrowContract {
                         .persistent()
                         .has(&DataKey::RefundApproval(bounty_id))
                     {
-                        env.storage().instance().remove(&DataKey::ReentrancyGuard);
                         return Err(Error::RefundNotApproved);
                     }
                     let approval: RefundApproval = env
@@ -1208,7 +1253,6 @@ impl BountyEscrowContract {
                         || approval.recipient != refund_recipient
                         || approval.mode != mode
                     {
-                        env.storage().instance().remove(&DataKey::ReentrancyGuard);
                         return Err(Error::RefundNotApproved);
                     }
 
@@ -1222,7 +1266,6 @@ impl BountyEscrowContract {
 
         // Validate amount
         if refund_amount <= 0 || refund_amount > escrow.remaining_amount {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
             return Err(Error::InvalidAmount);
         }
 
@@ -1233,7 +1276,6 @@ impl BountyEscrowContract {
         // Check contract balance
         let contract_balance = client.balance(&env.current_contract_address());
         if contract_balance < refund_amount {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
             return Err(Error::InsufficientFunds);
         }
 
@@ -1296,459 +1338,6 @@ impl BountyEscrowContract {
     // View Functions (Read-only)
     // ========================================================================
 
-    /// Creates a time-based release schedule for a bounty.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty to create schedule for
-    /// * `amount` - Amount to release (in token's smallest denomination)
-    /// * `release_timestamp` - Unix timestamp when funds become available
-    /// * `recipient` - Address that will receive the funds
-    ///
-    /// # Returns
-    /// * `Ok(())` - Schedule successfully created
-    /// * `Err(Error::NotInitialized)` - Contract not initialized
-    /// * `Err(Error::BountyNotFound)` - Bounty doesn't exist
-    /// * `Err(Error::FundsNotLocked)` - Bounty not in Locked state
-    /// * `Err(Error::Unauthorized)` - Caller is not admin
-    /// * `Err(Error::InvalidAmount)` - Amount is invalid
-    /// * `Err(Error::InvalidScheduleTimestamp)` - Timestamp is in the past
-    /// * `Err(Error::InsufficientScheduledAmount)` - Amount exceeds remaining funds
-    ///
-    /// # State Changes
-    /// - Creates ReleaseSchedule record
-    /// - Updates next schedule ID
-    /// - Emits ScheduleCreated event
-    ///
-    /// # Authorization
-    /// - Only admin can call this function
-    ///
-    /// # Example
-    /// ```rust
-    /// let now = env.ledger().timestamp();
-    /// let release_time = now + (30 * 24 * 60 * 60); // 30 days from now
-    /// escrow_client.create_release_schedule(
-    ///     &42,
-    ///     &500_0000000, // 500 tokens
-    ///     &release_time,
-    ///     &contributor_address
-    /// )?;
-    /// ```
-    pub fn create_release_schedule(
-        env: Env,
-        bounty_id: u64,
-        amount: i128,
-        release_timestamp: u64,
-        recipient: Address,
-    ) -> Result<(), Error> {
-        let start = env.ledger().timestamp();
-
-        // Ensure contract is initialized
-        if !env.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
-
-        // Verify admin authorization
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-
-        // Apply rate limiting
-        anti_abuse::check_rate_limit(&env, admin.clone());
-
-        // Verify bounty exists and is locked
-        if !env.storage().persistent().has(&DataKey::Escrow(bounty_id)) {
-            return Err(Error::BountyNotFound);
-        }
-
-        let escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(bounty_id))
-            .unwrap();
-
-        if escrow.status != EscrowStatus::Locked {
-            return Err(Error::FundsNotLocked);
-        }
-
-        // Validate amount
-        if amount <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-
-        // Validate timestamp
-        if release_timestamp <= env.ledger().timestamp() {
-            return Err(Error::InvalidScheduleTimestamp);
-        }
-
-        // Check sufficient remaining funds
-        let scheduled_total = get_total_scheduled_amount(&env, bounty_id);
-        if scheduled_total + amount > escrow.remaining_amount {
-            return Err(Error::InsufficientScheduledAmount);
-        }
-
-        // Get next schedule ID
-        let schedule_id: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::NextScheduleId(bounty_id))
-            .unwrap_or(1);
-
-        // Check for duplicate schedule ID
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-        {
-            return Err(Error::ScheduleExists);
-        }
-
-        // Create release schedule
-        let schedule = ReleaseSchedule {
-            schedule_id,
-            amount,
-            release_timestamp,
-            recipient: recipient.clone(),
-            released: false,
-            released_at: None,
-            released_by: None,
-        };
-
-        // Store schedule
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReleaseSchedule(bounty_id, schedule_id), &schedule);
-
-        // Update next schedule ID
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextScheduleId(bounty_id), &(schedule_id + 1));
-
-        // Emit schedule created event
-        env.events().publish(
-            (SCHEDULE_CREATED,),
-            ScheduleCreated {
-                bounty_id,
-                schedule_id,
-                amount,
-                release_timestamp,
-                recipient: recipient.clone(),
-                created_by: admin.clone(),
-            },
-        );
-
-        // Track successful operation
-        monitoring::track_operation(&env, symbol_short!("create_s"), admin, true);
-
-        // Track performance
-        let duration = env.ledger().timestamp().saturating_sub(start);
-        monitoring::emit_performance(&env, symbol_short!("create_s"), duration);
-
-        Ok(())
-    }
-
-    /// Automatically releases funds for schedules that are due.
-    /// Can be called by anyone after the release timestamp has passed.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty to check for due schedules
-    /// * `schedule_id` - The specific schedule to release
-    ///
-    /// # Returns
-    /// * `Ok(())` - Schedule successfully released
-    /// * `Err(Error::BountyNotFound)` - Bounty doesn't exist
-    /// * `Err(Error::ScheduleNotFound)` - Schedule doesn't exist
-    /// * `Err(Error::ScheduleAlreadyReleased)` - Schedule already released
-    /// * `Err(Error::ScheduleNotDue)` - Release timestamp not yet reached
-    ///
-    /// # State Changes
-    /// - Transfers tokens to recipient
-    /// - Updates schedule status to released
-    /// - Adds to release history
-    /// - Updates escrow remaining amount
-    /// - Emits ScheduleReleased event
-    ///
-    /// # Example
-    /// ```rust
-    /// // Anyone can call this after the timestamp
-    /// escrow_client.release_schedule_automatic(&42, &1)?;
-    /// ```
-    pub fn release_schedule_automatic(
-        env: Env,
-        bounty_id: u64,
-        schedule_id: u64,
-    ) -> Result<(), Error> {
-        let start = env.ledger().timestamp();
-        let caller = env.current_contract_address();
-
-        // Verify bounty exists
-        if !env.storage().persistent().has(&DataKey::Escrow(bounty_id)) {
-            return Err(Error::BountyNotFound);
-        }
-
-        // Get schedule
-        if !env
-            .storage()
-            .persistent()
-            .has(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-        {
-            return Err(Error::ScheduleNotFound);
-        }
-
-        let mut schedule: ReleaseSchedule = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-            .unwrap();
-
-        // Check if already released
-        if schedule.released {
-            return Err(Error::ScheduleAlreadyReleased);
-        }
-
-        // Check if due for release
-        let now = env.ledger().timestamp();
-        if now < schedule.release_timestamp {
-            return Err(Error::ScheduleNotDue);
-        }
-
-        // Get escrow and token client
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(bounty_id))
-            .unwrap();
-
-        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let client = token::Client::new(&env, &token_addr);
-
-        // Transfer funds
-        client.transfer(
-            &env.current_contract_address(),
-            &schedule.recipient,
-            &schedule.amount,
-        );
-
-        // Update schedule
-        schedule.released = true;
-        schedule.released_at = Some(now);
-        schedule.released_by = Some(env.current_contract_address());
-
-        // Update escrow
-        escrow.remaining_amount -= schedule.amount;
-        if escrow.remaining_amount == 0 {
-            escrow.status = EscrowStatus::Released;
-        }
-
-        // Add to release history
-        let history_entry = ReleaseHistory {
-            schedule_id,
-            bounty_id,
-            amount: schedule.amount,
-            recipient: schedule.recipient.clone(),
-            released_at: now,
-            released_by: env.current_contract_address(),
-            release_type: ReleaseType::Automatic,
-        };
-
-        let mut history: Vec<ReleaseHistory> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReleaseHistory(bounty_id))
-            .unwrap_or(vec![&env]);
-        history.push_back(history_entry);
-
-        // Store updates
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReleaseSchedule(bounty_id, schedule_id), &schedule);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Escrow(bounty_id), &escrow);
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReleaseHistory(bounty_id), &history);
-
-        // Emit schedule released event
-        env.events().publish(
-            (SCHEDULE_RELEASED,),
-            ScheduleReleased {
-                bounty_id,
-                schedule_id,
-                amount: schedule.amount,
-                recipient: schedule.recipient.clone(),
-                released_at: now,
-                released_by: env.current_contract_address(),
-                release_type: ReleaseType::Automatic,
-            },
-        );
-
-        // Track successful operation
-        monitoring::track_operation(&env, symbol_short!("rel_auto"), caller, true);
-
-        // Track performance
-        let duration = env.ledger().timestamp().saturating_sub(start);
-        monitoring::emit_performance(&env, symbol_short!("rel_auto"), duration);
-
-        Ok(())
-    }
-
-    /// Manually releases funds for a schedule (admin only).
-    /// Can be called before the release timestamp by admin.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty containing the schedule
-    /// * `schedule_id` - The schedule to release
-    ///
-    /// # Returns
-    /// * `Ok(())` - Schedule successfully released
-    /// * `Err(Error::NotInitialized)` - Contract not initialized
-    /// * `Err(Error::Unauthorized)` - Caller is not admin
-    /// * `Err(Error::BountyNotFound)` - Bounty doesn't exist
-    /// * `Err(Error::ScheduleNotFound)` - Schedule doesn't exist
-    /// * `Err(Error::ScheduleAlreadyReleased)` - Schedule already released
-    ///
-    /// # State Changes
-    /// - Transfers tokens to recipient
-    /// - Updates schedule status to released
-    /// - Adds to release history
-    /// - Updates escrow remaining amount
-    /// - Emits ScheduleReleased event
-    ///
-    /// # Authorization
-    /// - Only admin can call this function
-    ///
-    /// # Example
-    /// ```rust
-    /// // Admin can release early
-    /// escrow_client.release_schedule_manual(&42, &1)?;
-    /// ```
-    pub fn release_schedule_manual(
-        env: Env,
-        bounty_id: u64,
-        schedule_id: u64,
-    ) -> Result<(), Error> {
-        let start = env.ledger().timestamp();
-
-        // Ensure contract is initialized
-        if !env.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::NotInitialized);
-        }
-
-        // Verify admin authorization
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-
-        // Apply rate limiting
-        anti_abuse::check_rate_limit(&env, admin.clone());
-
-        // Verify bounty exists
-        if !env.storage().persistent().has(&DataKey::Escrow(bounty_id)) {
-            return Err(Error::BountyNotFound);
-        }
-
-        // Get schedule
-        if !env
-            .storage()
-            .persistent()
-            .has(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-        {
-            return Err(Error::ScheduleNotFound);
-        }
-
-        let mut schedule: ReleaseSchedule = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-            .unwrap();
-
-        // Check if already released
-        if schedule.released {
-            return Err(Error::ScheduleAlreadyReleased);
-        }
-
-        // Get escrow and token client
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(bounty_id))
-            .unwrap();
-
-        let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let client = token::Client::new(&env, &token_addr);
-
-        // Transfer funds
-        client.transfer(
-            &env.current_contract_address(),
-            &schedule.recipient,
-            &schedule.amount,
-        );
-
-        // Update schedule
-        let now = env.ledger().timestamp();
-        schedule.released = true;
-        schedule.released_at = Some(now);
-        schedule.released_by = Some(admin.clone());
-
-        // Update escrow
-        escrow.remaining_amount -= schedule.amount;
-        if escrow.remaining_amount == 0 {
-            escrow.status = EscrowStatus::Released;
-        }
-
-        // Add to release history
-        let history_entry = ReleaseHistory {
-            schedule_id,
-            bounty_id,
-            amount: schedule.amount,
-            recipient: schedule.recipient.clone(),
-            released_at: now,
-            released_by: admin.clone(),
-            release_type: ReleaseType::Manual,
-        };
-
-        let mut history: Vec<ReleaseHistory> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReleaseHistory(bounty_id))
-            .unwrap_or(vec![&env]);
-        history.push_back(history_entry);
-
-        // Store updates
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReleaseSchedule(bounty_id, schedule_id), &schedule);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Escrow(bounty_id), &escrow);
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReleaseHistory(bounty_id), &history);
-
-        // Emit schedule released event
-        env.events().publish(
-            (SCHEDULE_RELEASED,),
-            ScheduleReleased {
-                bounty_id,
-                schedule_id,
-                amount: schedule.amount,
-                recipient: schedule.recipient.clone(),
-                released_at: now,
-                released_by: admin.clone(),
-                release_type: ReleaseType::Manual,
-            },
-        );
-
-        // Track successful operation
-        monitoring::track_operation(&env, symbol_short!("rel_man"), admin, true);
-
-        // Track performance
-        let duration = env.ledger().timestamp().saturating_sub(start);
-        monitoring::emit_performance(&env, symbol_short!("rel_man"), duration);
-
-        Ok(())
-    }
     /// Retrieves escrow information for a specific bounty.
     ///
     /// # Arguments
@@ -1778,127 +1367,6 @@ impl BountyEscrowContract {
             .persistent()
             .get(&DataKey::Escrow(bounty_id))
             .unwrap())
-    }
-
-    /// Retrieves a specific release schedule.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty containing the schedule
-    /// * `schedule_id` - The schedule ID to retrieve
-    ///
-    /// # Returns
-    /// * `Ok(ReleaseSchedule)` - The schedule details
-    /// * `Err(Error::ScheduleNotFound)` - Schedule doesn't exist
-    pub fn get_release_schedule(
-        env: Env,
-        bounty_id: u64,
-        schedule_id: u64,
-    ) -> Result<ReleaseSchedule, Error> {
-        if !env
-            .storage()
-            .persistent()
-            .has(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-        {
-            return Err(Error::ScheduleNotFound);
-        }
-        Ok(env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-            .unwrap())
-    }
-
-    /// Retrieves all release schedules for a bounty.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty to query
-    ///
-    /// # Returns
-    /// * `Vec<ReleaseSchedule>` - All schedules for the bounty
-    pub fn get_all_release_schedules(env: Env, bounty_id: u64) -> Vec<ReleaseSchedule> {
-        let mut schedules = Vec::new(&env);
-        let next_id: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::NextScheduleId(bounty_id))
-            .unwrap_or(1);
-
-        for schedule_id in 1..next_id {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-            {
-                let schedule: ReleaseSchedule = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-                    .unwrap();
-                schedules.push_back(schedule);
-            }
-        }
-
-        schedules
-    }
-
-    /// Retrieves pending (unreleased) schedules for a bounty.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty to query
-    ///
-    /// # Returns
-    /// * `Vec<ReleaseSchedule>` - All pending schedules
-    pub fn get_pending_schedules(env: Env, bounty_id: u64) -> Vec<ReleaseSchedule> {
-        let all_schedules = Self::get_all_release_schedules(env.clone(), bounty_id);
-        let mut pending = Vec::new(&env);
-
-        for schedule in all_schedules.iter() {
-            if !schedule.released {
-                pending.push_back(schedule.clone());
-            }
-        }
-
-        pending
-    }
-
-    /// Retrieves due schedules (timestamp passed but not released).
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty to query
-    ///
-    /// # Returns
-    /// * `Vec<ReleaseSchedule>` - All due but unreleased schedules
-    pub fn get_due_schedules(env: Env, bounty_id: u64) -> Vec<ReleaseSchedule> {
-        let pending = Self::get_pending_schedules(env.clone(), bounty_id);
-        let mut due = Vec::new(&env);
-        let now = env.ledger().timestamp();
-
-        for schedule in pending.iter() {
-            if schedule.release_timestamp <= now {
-                due.push_back(schedule.clone());
-            }
-        }
-
-        due
-    }
-
-    /// Retrieves release history for a bounty.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `bounty_id` - The bounty to query
-    ///
-    /// # Returns
-    /// * `Vec<ReleaseHistory>` - Complete release history
-    pub fn get_release_history(env: Env, bounty_id: u64) -> Vec<ReleaseHistory> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::ReleaseHistory(bounty_id))
-            .unwrap_or(vec![&env])
     }
 
     /// Returns the current token balance held by the contract.
@@ -2029,27 +1497,16 @@ impl BountyEscrowContract {
     /// # Note
     /// This operation is atomic - if any item fails, the entire transaction reverts.
     pub fn batch_lock_funds(env: Env, items: Vec<LockFundsItem>) -> Result<u32, Error> {
-        // Reentrancy guard for batch operation.
-        if env.storage().instance().has(&DataKey::ReentrancyGuard) {
-            panic!("Reentrancy detected");
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
-
         // Validate batch size
         let batch_size = items.len() as u32;
         if batch_size == 0 {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(Error::InvalidAmount);
+            return Err(Error::InvalidBatchSize);
         }
         if batch_size > MAX_BATCH_SIZE {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(Error::InvalidAmount);
+            return Err(Error::InvalidBatchSize);
         }
 
         if !env.storage().instance().has(&DataKey::Admin) {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
             return Err(Error::NotInitialized);
         }
 
@@ -2066,13 +1523,11 @@ impl BountyEscrowContract {
                 .persistent()
                 .has(&DataKey::Escrow(item.bounty_id))
             {
-                env.storage().instance().remove(&DataKey::ReentrancyGuard);
                 return Err(Error::BountyExists);
             }
 
             // Validate amount
             if item.amount <= 0 {
-                env.storage().instance().remove(&DataKey::ReentrancyGuard);
                 return Err(Error::InvalidAmount);
             }
 
@@ -2084,7 +1539,6 @@ impl BountyEscrowContract {
                 }
             }
             if count > 1 {
-                env.storage().instance().remove(&DataKey::ReentrancyGuard);
                 return Err(Error::DuplicateBountyId);
             }
         }
@@ -2151,7 +1605,6 @@ impl BountyEscrowContract {
             },
         );
 
-        env.storage().instance().remove(&DataKey::ReentrancyGuard);
         Ok(locked_count)
     }
 
@@ -2173,27 +1626,16 @@ impl BountyEscrowContract {
     /// # Note
     /// This operation is atomic - if any item fails, the entire transaction reverts.
     pub fn batch_release_funds(env: Env, items: Vec<ReleaseFundsItem>) -> Result<u32, Error> {
-        // Reentrancy guard for batch operation.
-        if env.storage().instance().has(&DataKey::ReentrancyGuard) {
-            panic!("Reentrancy detected");
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::ReentrancyGuard, &true);
-
         // Validate batch size
         let batch_size = items.len() as u32;
         if batch_size == 0 {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(Error::InvalidAmount);
+            return Err(Error::InvalidBatchSize);
         }
         if batch_size > MAX_BATCH_SIZE {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
-            return Err(Error::InvalidAmount);
+            return Err(Error::InvalidBatchSize);
         }
 
         if !env.storage().instance().has(&DataKey::Admin) {
-            env.storage().instance().remove(&DataKey::ReentrancyGuard);
             return Err(Error::NotInitialized);
         }
 
@@ -2214,7 +1656,6 @@ impl BountyEscrowContract {
                 .persistent()
                 .has(&DataKey::Escrow(item.bounty_id))
             {
-                env.storage().instance().remove(&DataKey::ReentrancyGuard);
                 return Err(Error::BountyNotFound);
             }
 
@@ -2226,7 +1667,6 @@ impl BountyEscrowContract {
 
             // Check if funds are locked
             if escrow.status != EscrowStatus::Locked {
-                env.storage().instance().remove(&DataKey::ReentrancyGuard);
                 return Err(Error::FundsNotLocked);
             }
 
@@ -2238,7 +1678,6 @@ impl BountyEscrowContract {
                 }
             }
             if count > 1 {
-                env.storage().instance().remove(&DataKey::ReentrancyGuard);
                 return Err(Error::DuplicateBountyId);
             }
 
@@ -2256,14 +1695,14 @@ impl BountyEscrowContract {
                 .get(&DataKey::Escrow(item.bounty_id))
                 .unwrap();
 
-            // Update escrow status before external transfer (checks-effects-interactions).
+            // Transfer funds to contributor
+            client.transfer(&contract_address, &item.contributor, &escrow.amount);
+
+            // Update escrow status
             escrow.status = EscrowStatus::Released;
             env.storage()
                 .persistent()
                 .set(&DataKey::Escrow(item.bounty_id), &escrow);
-
-            // Transfer funds to contributor
-            client.transfer(&contract_address, &item.contributor, &escrow.amount);
 
             // Emit individual event for each released bounty
             emit_funds_released(
@@ -2289,38 +1728,8 @@ impl BountyEscrowContract {
             },
         );
 
-        env.storage().instance().remove(&DataKey::ReentrancyGuard);
         Ok(released_count)
     }
-}
-
-/// Helper function to calculate total scheduled amount for a bounty.
-fn get_total_scheduled_amount(env: &Env, bounty_id: u64) -> i128 {
-    let next_id: u64 = env
-        .storage()
-        .persistent()
-        .get(&DataKey::NextScheduleId(bounty_id))
-        .unwrap_or(1);
-
-    let mut total = 0i128;
-    for schedule_id in 1..next_id {
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-        {
-            let schedule: ReleaseSchedule = env
-                .storage()
-                .persistent()
-                .get(&DataKey::ReleaseSchedule(bounty_id, schedule_id))
-                .unwrap();
-            if !schedule.released {
-                total += schedule.amount;
-            }
-        }
-    }
-
-    total
 }
 
 #[cfg(test)]
