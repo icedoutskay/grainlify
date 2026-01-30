@@ -167,5 +167,3 @@ func getEnvBool(key string, fallback bool) bool {
 		return fallback
 	}
 }
-
-

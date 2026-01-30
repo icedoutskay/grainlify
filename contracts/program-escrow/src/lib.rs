@@ -141,9 +141,49 @@
 
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, vec, Address, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, Map, String, Symbol, Vec,
     token,
 };
+
+// ============================================================================
+// Error Definitions
+// ============================================================================
+
+/// Contract error codes for the Program Escrow system.
+///
+/// # Error Codes
+/// * `AlreadyInitialized (1)` - Program has already been initialized
+/// * `NotInitialized (2)` - Program must be initialized before use
+/// * `InsufficientBalance (3)` - Insufficient funds for payout
+/// * `Unauthorized (4)` - Caller lacks required authorization
+/// * `InvalidAmount (5)` - Amount must be greater than zero
+/// * `BatchMismatch (6)` - Recipients and amounts vectors length mismatch
+/// * `MetadataTooLarge (7)` - Metadata exceeds size limits
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    /// Returned when attempting to initialize an already initialized program
+    AlreadyInitialized = 1,
+    
+    /// Returned when calling program functions before initialization
+    NotInitialized = 2,
+    
+    /// Returned when attempting payout with insufficient balance
+    InsufficientBalance = 3,
+    
+    /// Returned when caller lacks required authorization for the operation
+    Unauthorized = 4,
+    
+    /// Returned when amount is zero or negative
+    InvalidAmount = 5,
+    
+    /// Returned when recipients and amounts vectors have different lengths
+    BatchMismatch = 6,
+    
+    /// Returned when metadata exceeds size limits
+    MetadataTooLarge = 7,
+}
 
 // ============================================================================
 // Event Types
@@ -172,6 +212,10 @@ const PAYOUT: Symbol = symbol_short!("Payout");
 /// Storage key for program data.
 /// Contains all program state including balances and payout history.
 const PROGRAM_DATA: Symbol = symbol_short!("ProgramData");
+
+/// Storage key for program metadata.
+/// Contains optional metadata for indexing and categorization.
+const PROGRAM_METADATA: Symbol = symbol_short!("ProgramMeta");
 
 // ============================================================================
 // Data Structures
@@ -245,6 +289,165 @@ pub struct ProgramData {
     pub token_address: Address,
 }
 
+/// Metadata structure for enhanced program indexing and categorization.
+///
+/// # Fields
+/// * `event_name` - Full event/hackathon name
+/// * `event_type` - Type classification (e.g., "hackathon", "grant", "bounty-program")
+/// * `start_date` - Event start date (YYYY-MM-DD format)
+/// * `end_date` - Event end date (YYYY-MM-DD format)
+/// * `website` - Event website URL
+/// * `tags` - Custom tags for filtering and categorization
+/// * `custom_fields` - Additional key-value pairs for extensibility
+///
+/// # Size Limits
+/// * Total serialized size: 2048 bytes maximum
+/// * Tags vector: 30 items maximum
+/// * Custom fields map: 15 key-value pairs maximum
+/// * Individual string values: 256 characters maximum
+///
+/// # Storage
+/// Stored in instance storage with key `PROGRAM_METADATA`.
+/// Metadata is optional and can be added/updated after program creation.
+///
+/// # Example
+/// ```rust
+/// let metadata = ProgramMetadata {
+///     event_name: Some(String::from_str(&env, "Stellar Hackathon 2024")),
+///     event_type: Some(String::from_str(&env, "hackathon")),
+///     start_date: Some(String::from_str(&env, "2024-06-01")),
+///     end_date: Some(String::from_str(&env, "2024-06-30")),
+///     website: Some(String::from_str(&env, "https://hackathon.stellar.org")),
+///     tags: vec![&env,
+///         String::from_str(&env, "blockchain"),
+///         String::from_str(&env, "defi"),
+///         String::from_str(&env, "web3")
+///     ],
+///     custom_fields: map![
+///         &env,
+///         (String::from_str(&env, "track_count"), String::from_str(&env, "5")),
+///         (String::from_str(&env, "expected_participants"), String::from_str(&env, "500"))
+///     ]
+/// };
+/// ```
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProgramMetadata {
+    pub event_name: Option<String>,
+    pub event_type: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub website: Option<String>,
+    pub tags: Vec<String>,
+    pub custom_fields: Map<String, String>,
+}
+
+/// Combined view of program data and metadata for convenient access.
+///
+/// # Fields
+/// * `program` - Core program information
+/// * `metadata` - Optional metadata (None if not set)
+///
+/// # Usage
+/// Provides a unified interface for retrieving complete program information
+/// including both financial and descriptive data.
+///
+/// # Example
+/// ```rust
+/// let program_view = escrow_client.get_program_with_metadata()?;
+/// if let Some(metadata) = program_view.metadata {
+///     println!("Event: {:?}", metadata.event_name);
+///     println!("Type: {:?}", metadata.event_type);
+///     println!("Website: {:?}", metadata.website);
+/// }
+/// ```
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProgramWithMetadata {
+    pub program: ProgramData,
+    pub metadata: Option<ProgramMetadata>,
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Validates program metadata size limits to prevent excessive storage costs.
+///
+/// # Parameters
+/// * `metadata` - Metadata to validate
+///
+/// # Returns
+/// * `true` if metadata is within size limits
+/// * `false` if metadata exceeds limits
+///
+/// # Limits Checked
+/// * Tags vector length ≤ 30
+/// * Custom fields map size ≤ 15
+/// * Individual string values ≤ 256 characters
+/// * Total serialized size ≤ 2048 bytes
+fn validate_program_metadata_size(env: &Env, metadata: &ProgramMetadata) -> bool {
+    // Check tags limit
+    if metadata.tags.len() > 30 {
+        return false;
+    }
+    
+    // Check custom fields limit
+    if metadata.custom_fields.len() > 15 {
+        return false;
+    }
+    
+    // Check individual string lengths
+    if let Some(event_name) = &metadata.event_name {
+        if event_name.len() > 256 {
+            return false;
+        }
+    }
+    
+    if let Some(event_type) = &metadata.event_type {
+        if event_type.len() > 256 {
+            return false;
+        }
+    }
+    
+    if let Some(start_date) = &metadata.start_date {
+        if start_date.len() > 256 {
+            return false;
+        }
+    }
+    
+    if let Some(end_date) = &metadata.end_date {
+        if end_date.len() > 256 {
+            return false;
+        }
+    }
+    
+    if let Some(website) = &metadata.website {
+        if website.len() > 256 {
+            return false;
+        }
+    }
+    
+    for tag in metadata.tags.iter() {
+        if tag.len() > 256 {
+            return false;
+        }
+    }
+    
+    for (_, value) in metadata.custom_fields.iter() {
+        if value.len() > 256 {
+            return false;
+        }
+    }
+    
+    // Check total serialized size (approximate)
+    let serialized_size = env
+        .serialize_to_bytes(metadata)
+        .len();
+    
+    serialized_size <= 2048
+}
+
 // ============================================================================
 // Contract Implementation
 // ============================================================================
@@ -269,8 +472,9 @@ impl ProgramEscrowContract {
     /// # Returns
     /// * `ProgramData` - The initialized program configuration
     ///
-    /// # Panics
-    /// * If program is already initialized
+    /// # Returns
+    /// * `Ok(ProgramData)` - The initialized program configuration
+    /// * `Err(Error::AlreadyInitialized)` - Program already initialized
     ///
     /// # State Changes
     /// - Creates ProgramData with zero balances
@@ -329,10 +533,10 @@ impl ProgramEscrowContract {
         program_id: String,
         authorized_payout_key: Address,
         token_address: Address,
-    ) -> ProgramData {
+    ) -> Result<ProgramData, Error> {
         // Prevent re-initialization
         if env.storage().instance().has(&PROGRAM_DATA) {
-            panic!("Program already initialized");
+            return Err(Error::AlreadyInitialized);
         }
 
         // Create program data with zero balances
@@ -354,7 +558,73 @@ impl ProgramEscrowContract {
             (program_id, authorized_payout_key, token_address, 0i128),
         );
 
-        program_data
+        Ok(program_data)
+    }
+
+    /// Sets or updates metadata for the program.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `metadata` - Metadata structure containing event details and tags
+    ///
+    /// # Returns
+    /// * `Ok(())` - Metadata successfully set/updated
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    /// * `Err(Error::MetadataTooLarge)` - Metadata exceeds size limits
+    /// * `Err(Error::Unauthorized)` - Caller is not the authorized payout key
+    ///
+    /// # State Changes
+    /// - Stores/updates metadata in instance storage
+    ///
+    /// # Authorization
+    /// - Only the authorized payout key can set/update metadata
+    /// - This prevents unauthorized metadata modification
+    ///
+    /// # Size Limits
+    /// See `validate_program_metadata_size()` documentation for detailed limits.
+    ///
+    /// # Example
+    /// ```rust
+    /// let metadata = ProgramMetadata {
+    ///     event_name: Some(String::from_str(&env, "Stellar Hackathon 2024")),
+    ///     event_type: Some(String::from_str(&env, "hackathon")),
+    ///     start_date: Some(String::from_str(&env, "2024-06-01")),
+    ///     end_date: Some(String::from_str(&env, "2024-06-30")),
+    ///     website: Some(String::from_str(&env, "https://hackathon.stellar.org")),
+    ///     tags: vec![&env, String::from_str(&env, "blockchain")],
+    ///     custom_fields: map![&env],
+    /// };
+    /// 
+    /// escrow_client.set_program_metadata(&metadata);
+    /// ```
+    pub fn set_program_metadata(env: Env, metadata: ProgramMetadata) -> Result<(), Error> {
+        // Verify program is initialized
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
+        }
+
+        // Get current program data for authorization check
+        let program_data: ProgramData = env
+            .storage()
+            .instance()
+            .get(&PROGRAM_DATA)
+            .unwrap();
+
+        // Verify authorization
+        let caller = env.invoker();
+        if caller != program_data.authorized_payout_key {
+            return Err(Error::Unauthorized);
+        }
+
+        // Validate metadata size limits
+        if !validate_program_metadata_size(&env, &metadata) {
+            return Err(Error::MetadataTooLarge);
+        }
+
+        // Store metadata
+        env.storage().instance().set(&PROGRAM_METADATA, &metadata);
+
+        Ok(())
     }
 
     // ========================================================================
@@ -370,9 +640,10 @@ impl ProgramEscrowContract {
     /// # Returns
     /// * `ProgramData` - Updated program data with new balance
     ///
-    /// # Panics
-    /// * If amount is zero or negative
-    /// * If program is not initialized
+    /// # Returns
+    /// * `Ok(ProgramData)` - Updated program data with new balance
+    /// * `Err(Error::InvalidAmount)` - Amount must be greater than zero
+    /// * `Err(Error::NotInitialized)` - Program not initialized
     ///
     /// # State Changes
     /// - Increases `total_funds` by amount
@@ -439,10 +710,15 @@ impl ProgramEscrowContract {
     /// - Forgetting to transfer tokens before calling
     /// -  Locking amount that exceeds actual contract balance
     /// -  Not verifying contract received the tokens
-    pub fn lock_program_funds(env: Env, amount: i128) -> ProgramData {
+    pub fn lock_program_funds(env: Env, amount: i128) -> Result<ProgramData, Error> {
         // Validate amount
         if amount <= 0 {
-            panic!("Amount must be greater than zero");
+            return Err(Error::InvalidAmount);
+        }
+
+        // Verify program is initialized
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
         }
 
         // Get current program data
@@ -450,7 +726,7 @@ impl ProgramEscrowContract {
             .storage()
             .instance()
             .get(&PROGRAM_DATA)
-            .unwrap_or_else(|| panic!("Program not initialized"));
+            .unwrap();
 
         // Update balances (cumulative)
         program_data.total_funds += amount;
@@ -469,7 +745,7 @@ impl ProgramEscrowContract {
             ),
         );
 
-        program_data
+        Ok(program_data)
     }
 
     // ========================================================================
@@ -484,16 +760,12 @@ impl ProgramEscrowContract {
     /// * `amounts` - Vector of amounts (must match recipients length)
     ///
     /// # Returns
-    /// * `ProgramData` - Updated program data after payouts
-    ///
-    /// # Panics
-    /// * If caller is not the authorized payout key
-    /// * If program is not initialized
-    /// * If recipients and amounts vectors have different lengths
-    /// * If vectors are empty
-    /// * If any amount is zero or negative
-    /// * If total payout exceeds remaining balance
-    /// * If arithmetic overflow occurs
+    /// * `Ok(ProgramData)` - Updated program data after payouts
+    /// * `Err(Error::Unauthorized)` - Caller is not the authorized payout key
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    /// * `Err(Error::BatchMismatch)` - Recipients and amounts vectors length mismatch
+    /// * `Err(Error::InvalidAmount)` - Amount is zero or negative
+    /// * `Err(Error::InsufficientBalance)` - Total payout exceeds remaining balance
     ///
     /// # Authorization
     /// - **CRITICAL**: Only authorized payout key can call
@@ -575,47 +847,49 @@ impl ProgramEscrowContract {
         env: Env,
         recipients: Vec<Address>,
         amounts: Vec<i128>,
-    ) -> ProgramData {
+    ) -> Result<ProgramData, Error> {
+        // Verify program is initialized
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
+        }
+
         // Get current program data
         let program_data: ProgramData = env
             .storage()
             .instance()
             .get(&PROGRAM_DATA)
-            .unwrap_or_else(|| panic!("Program not initialized"));
+            .unwrap();
 
         // Verify authorization - CRITICAL security check
         let caller = env.invoker();
         if caller != program_data.authorized_payout_key {
-            panic!("Unauthorized: only authorized payout key can trigger payouts");
+            return Err(Error::Unauthorized);
         }
 
         // Validate input lengths match
         if recipients.len() != amounts.len() {
-            panic!("Recipients and amounts vectors must have the same length");
+            return Err(Error::BatchMismatch);
         }
 
         // Validate non-empty batch
         if recipients.len() == 0 {
-            panic!("Cannot process empty batch");
+            return Err(Error::BatchMismatch);
         }
 
         // Calculate total payout with overflow protection
         let mut total_payout: i128 = 0;
         for amount in amounts.iter() {
             if *amount <= 0 {
-                panic!("All amounts must be greater than zero");
+                return Err(Error::InvalidAmount);
             }
             total_payout = total_payout
                 .checked_add(*amount)
-                .unwrap_or_else(|| panic!("Payout amount overflow"));
+                .ok_or(Error::InvalidAmount)?;
         }
 
         // Validate sufficient balance
         if total_payout > program_data.remaining_balance {
-            panic!(
-                "Insufficient balance: requested {}, available {}",
-                total_payout, program_data.remaining_balance
-            );
+            return Err(Error::InsufficientBalance);
         }
 
         // Execute transfers and record payouts
@@ -660,7 +934,7 @@ impl ProgramEscrowContract {
             ),
         );
 
-        updated_data
+        Ok(updated_data)
     }
 
     /// Executes a single payout to one recipient.
@@ -671,13 +945,11 @@ impl ProgramEscrowContract {
     /// * `amount` - Amount to transfer (in token's smallest denomination)
     ///
     /// # Returns
-    /// * `ProgramData` - Updated program data after payout
-    ///
-    /// # Panics
-    /// * If caller is not the authorized payout key
-    /// * If program is not initialized
-    /// * If amount is zero or negative
-    /// * If amount exceeds remaining balance
+    /// * `Ok(ProgramData)` - Updated program data after payout
+    /// * `Err(Error::Unauthorized)` - Caller is not the authorized payout key
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    /// * `Err(Error::InvalidAmount)` - Amount is zero or negative
+    /// * `Err(Error::InsufficientBalance)` - Amount exceeds remaining balance
     ///
     /// # Authorization
     /// - Only authorized payout key can call this function
@@ -716,31 +988,33 @@ impl ProgramEscrowContract {
     /// - Individual prize awards
     /// - Bonus payments
     /// - Late additions to prize pool distribution
-    pub fn single_payout(env: Env, recipient: Address, amount: i128) -> ProgramData {
+    pub fn single_payout(env: Env, recipient: Address, amount: i128) -> Result<ProgramData, Error> {
+        // Verify program is initialized
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
+        }
+
         // Get current program data
         let program_data: ProgramData = env
             .storage()
             .instance()
             .get(&PROGRAM_DATA)
-            .unwrap_or_else(|| panic!("Program not initialized"));
+            .unwrap();
 
         // Verify authorization
         let caller = env.invoker();
         if caller != program_data.authorized_payout_key {
-            panic!("Unauthorized: only authorized payout key can trigger payouts");
+            return Err(Error::Unauthorized);
         }
 
         // Validate amount
         if amount <= 0 {
-            panic!("Amount must be greater than zero");
+            return Err(Error::InvalidAmount);
         }
 
         // Validate sufficient balance
         if amount > program_data.remaining_balance {
-            panic!(
-                "Insufficient balance: requested {}, available {}",
-                amount, program_data.remaining_balance
-            );
+            return Err(Error::InsufficientBalance);
         }
 
         // Transfer tokens to recipient
@@ -780,7 +1054,7 @@ impl ProgramEscrowContract {
             ),
         );
 
-        updated_data
+        Ok(updated_data)
     }
 
     // ========================================================================
@@ -793,16 +1067,14 @@ impl ProgramEscrowContract {
     /// * `env` - The contract environment
     ///
     /// # Returns
-    /// * `ProgramData` - Complete program state including:
+    /// * `Ok(ProgramData)` - Complete program state including:
     ///   - Program ID
     ///   - Total funds locked
     ///   - Remaining balance
     ///   - Authorized payout key
     ///   - Complete payout history
     ///   - Token contract address
-    ///
-    /// # Panics
-    /// * If program is not initialized
+    /// * `Err(Error::NotInitialized)` - Program not initialized
     ///
     /// # Use Cases
     /// - Verifying program configuration
@@ -821,11 +1093,77 @@ impl ProgramEscrowContract {
     ///
     /// # Gas Cost
     /// Very Low - Single storage read
-    pub fn get_program_info(env: Env) -> ProgramData {
-        env.storage()
+    pub fn get_program_info(env: Env) -> Result<ProgramData, Error> {
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
+        }
+        
+        Ok(env.storage()
             .instance()
             .get(&PROGRAM_DATA)
-            .unwrap_or_else(|| panic!("Program not initialized"))
+            .unwrap())
+    }
+
+    /// Retrieves metadata for the program.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    ///
+    /// # Returns
+    /// * `Ok(Option<ProgramMetadata>)` - Metadata if set, None if not set
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    ///
+    /// # Example
+    /// ```rust
+    /// let metadata_opt = escrow_client.get_program_metadata();
+    /// if let Some(metadata) = metadata_opt {
+    ///     println!("Event: {:?}", metadata.event_name);
+    ///     println!("Type: {:?}", metadata.event_type);
+    ///     println!("Website: {:?}", metadata.website);
+    ///     println!("Tags: {:?}", metadata.tags);
+    /// }
+    /// ```
+    pub fn get_program_metadata(env: Env) -> Result<Option<ProgramMetadata>, Error> {
+        // Verify program is initialized
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
+        }
+        
+        // Get metadata if it exists
+        Ok(env.storage().instance().get(&PROGRAM_METADATA))
+    }
+
+    /// Retrieves complete program information including metadata.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    ///
+    /// # Returns
+    /// * `Ok(ProgramWithMetadata)` - Combined program and metadata information
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    ///
+    /// # Example
+    /// ```rust
+    /// let program_view = escrow_client.get_program_with_metadata();
+    /// println!("Program: {}", program_view.program.program_id);
+    /// println!("Balance: {}", program_view.program.remaining_balance);
+    /// 
+    /// if let Some(meta) = program_view.metadata {
+    ///     println!("Event: {:?}", meta.event_name);
+    ///     println!("Website: {:?}", meta.website);
+    /// }
+    /// ```
+    pub fn get_program_with_metadata(env: Env) -> Result<ProgramWithMetadata, Error> {
+        // Get core program data
+        let program = Self::get_program_info(env.clone())?;
+        
+        // Get metadata if it exists
+        let metadata = Self::get_program_metadata(env)?;
+        
+        Ok(ProgramWithMetadata {
+            program,
+            metadata,
+        })
     }
 
     /// Retrieves the remaining balance available in the program.
@@ -837,10 +1175,8 @@ impl ProgramEscrowContract {
     /// * `env` - The contract environment
     ///
     /// # Returns
-    /// * `i128` - Remaining token balance that has not been paid out
-    ///
-    /// # Panics
-    /// * If program is not initialized
+    /// * `Ok(i128)` - Remaining token balance that has not been paid out
+    /// * `Err(Error::NotInitialized)` - Program not initialized
     ///
     /// # Use Cases
     /// - Checking available funds before initiating a payout
@@ -859,13 +1195,17 @@ impl ProgramEscrowContract {
     ///
     /// # Gas Cost
     /// Very Low - Single storage read
-    pub fn get_remaining_balance(env: Env) -> i128 {
+    pub fn get_remaining_balance(env: Env) -> Result<i128, Error> {
+        if !env.storage().instance().has(&PROGRAM_DATA) {
+            return Err(Error::NotInitialized);
+        }
+        
         let program_data: ProgramData = env
             .storage()
             .instance()
             .get(&PROGRAM_DATA)
-            .unwrap_or_else(|| panic!("Program not initialized"));
+            .unwrap();
 
-        program_data.remaining_balance
+        Ok(program_data.remaining_balance)
     }
 }
