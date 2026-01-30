@@ -139,6 +139,8 @@
 //! 6. **Token Approval**: Ensure contract has token allowance before locking funds
 
 #![no_std]
+mod pause_tests;
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, vec, Address, Env, String, Symbol,
     Vec,
@@ -507,6 +509,10 @@ const PROGRAM_REGISTRY: Symbol = symbol_short!("ProgReg");
 // Data Structures
 // ============================================================================
 
+/// Storage key for program metadata.
+/// Contains optional metadata for indexing and categorization.
+const PROGRAM_METADATA: Symbol = symbol_short!("ProgramMeta");
+
 // ============================================================================
 // Data Structures
 // ============================================================================
@@ -734,8 +740,9 @@ impl ProgramEscrowContract {
     /// # Returns
     /// * `ProgramData` - The initialized program configuration
     ///
-    /// # Panics
-    /// * If program is already initialized
+    /// # Returns
+    /// * `Ok(ProgramData)` - The initialized program configuration
+    /// * `Err(Error::AlreadyInitialized)` - Program already initialized
     ///
     /// # State Changes
     /// - Creates ProgramData with zero balances
@@ -1114,9 +1121,10 @@ impl ProgramEscrowContract {
     /// # Returns
     /// * `ProgramData` - Updated program data with new balance
     ///
-    /// # Panics
-    /// * If amount is zero or negative
-    /// * If program is not initialized
+    /// # Returns
+    /// * `Ok(ProgramData)` - Updated program data with new balance
+    /// * `Err(Error::InvalidAmount)` - Amount must be greater than zero
+    /// * `Err(Error::NotInitialized)` - Program not initialized
     ///
     /// # State Changes
     /// - Increases `total_funds` by amount
@@ -1252,11 +1260,15 @@ impl ProgramEscrowContract {
             ),
         );
 
+
         // Note: Caller is responsible for transferring actual tokens to the contract
         // before calling this function. This function only records the locked amount
         // in the program state. Use token_client.transfer() to move tokens separately.
 
         program_data
+
+        Ok(program_data)
+
     }
 
     // ========================================================================
@@ -1271,16 +1283,12 @@ impl ProgramEscrowContract {
     /// * `amounts` - Vector of amounts (must match recipients length)
     ///
     /// # Returns
-    /// * `ProgramData` - Updated program data after payouts
-    ///
-    /// # Panics
-    /// * If caller is not the authorized payout key
-    /// * If program is not initialized
-    /// * If recipients and amounts vectors have different lengths
-    /// * If vectors are empty
-    /// * If any amount is zero or negative
-    /// * If total payout exceeds remaining balance
-    /// * If arithmetic overflow occurs
+    /// * `Ok(ProgramData)` - Updated program data after payouts
+    /// * `Err(Error::Unauthorized)` - Caller is not the authorized payout key
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    /// * `Err(Error::BatchMismatch)` - Recipients and amounts vectors length mismatch
+    /// * `Err(Error::InvalidAmount)` - Amount is zero or negative
+    /// * `Err(Error::InsufficientBalance)` - Total payout exceeds remaining balance
     ///
     /// # Authorization
     /// - **CRITICAL**: Only authorized payout key can call
@@ -1403,7 +1411,7 @@ impl ProgramEscrowContract {
 
         // Validate inputs
         if recipients.len() != amounts.len() {
-            panic!("Recipients and amounts vectors must have the same length");
+            return Err(Error::BatchMismatch);
         }
 
         if recipients.is_empty() {
@@ -1424,10 +1432,7 @@ impl ProgramEscrowContract {
 
         // Validate balance
         if total_payout > program_data.remaining_balance {
-            panic!(
-                "Insufficient balance: requested {}, available {}",
-                total_payout, program_data.remaining_balance
-            );
+            return Err(Error::InsufficientBalance);
         }
 
         // Calculate fees if enabled
@@ -1502,7 +1507,7 @@ impl ProgramEscrowContract {
             ),
         );
 
-        updated_data
+        Ok(updated_data)
     }
 
     /// Executes a single payout to one recipient.
@@ -1513,13 +1518,11 @@ impl ProgramEscrowContract {
     /// * `amount` - Amount to transfer (in token's smallest denomination)
     ///
     /// # Returns
-    /// * `ProgramData` - Updated program data after payout
-    ///
-    /// # Panics
-    /// * If caller is not the authorized payout key
-    /// * If program is not initialized
-    /// * If amount is zero or negative
-    /// * If amount exceeds remaining balance
+    /// * `Ok(ProgramData)` - Updated program data after payout
+    /// * `Err(Error::Unauthorized)` - Caller is not the authorized payout key
+    /// * `Err(Error::NotInitialized)` - Program not initialized
+    /// * `Err(Error::InvalidAmount)` - Amount is zero or negative
+    /// * `Err(Error::InsufficientBalance)` - Amount exceeds remaining balance
     ///
     /// # Authorization
     /// - Only authorized payout key can call this function
@@ -1589,15 +1592,12 @@ impl ProgramEscrowContract {
 
         // Validate amount
         if amount <= 0 {
-            panic!("Amount must be greater than zero");
+            return Err(Error::InvalidAmount);
         }
 
         // Validate balance
         if amount > program_data.remaining_balance {
-            panic!(
-                "Insufficient balance: requested {}, available {}",
-                amount, program_data.remaining_balance
-            );
+            return Err(Error::InsufficientBalance);
         }
 
         // Calculate and collect fee if enabled
@@ -1660,7 +1660,7 @@ impl ProgramEscrowContract {
             ),
         );
 
-        updated_data
+        Ok(updated_data)
     }
 
     // ========================================================================
@@ -2096,16 +2096,14 @@ impl ProgramEscrowContract {
     /// * `env` - The contract environment
     ///
     /// # Returns
-    /// * `ProgramData` - Complete program state including:
+    /// * `Ok(ProgramData)` - Complete program state including:
     ///   - Program ID
     ///   - Total funds locked
     ///   - Remaining balance
     ///   - Authorized payout key
     ///   - Complete payout history
     ///   - Token contract address
-    ///
-    /// # Panics
-    /// * If program is not initialized
+    /// * `Err(Error::NotInitialized)` - Program not initialized
     ///
     /// # Use Cases
     /// - Verifying program configuration
@@ -2168,11 +2166,7 @@ impl ProgramEscrowContract {
         fee_enabled: Option<bool>,
     ) {
         // Verify authorization
-        let program_data: ProgramData = env
-            .storage()
-            .instance()
-            .get(&PROGRAM_DATA)
-            .unwrap_or_else(|| panic!("Program not initialized"));
+        let program_data: ProgramData = env.storage().instance().get(&PROGRAM_DATA).unwrap();
 
         // Note: In Soroban, we check authorization by requiring auth from the authorized key
         // For this function, we'll require auth from the authorized_payout_key
