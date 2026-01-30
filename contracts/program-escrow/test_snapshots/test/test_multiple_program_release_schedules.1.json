@@ -56,7 +56,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CACMVW2KK4H5FZDFF2AUCAKQTEJMZZWJUIZF23XMRVYQBSXYLHZ6BKWN",
-              "function_name": "approve",
+              "function_name": "transfer",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
@@ -69,9 +69,6 @@
                     "hi": 0,
                     "lo": 10000000000
                   }
-                },
-                {
-                  "u32": 1000
                 }
               ]
             }
@@ -1130,31 +1127,14 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "Allowance"
+                  "symbol": "Balance"
                 },
                 {
-                  "map": [
-                    {
-                      "key": {
-                        "symbol": "from"
-                      },
-                      "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "spender"
-                      },
-                      "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                      }
-                    }
-                  ]
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 }
               ]
             },
-            "durability": "temporary"
+            "durability": "persistent"
           }
         },
         [
@@ -1167,31 +1147,14 @@
                 "key": {
                   "vec": [
                     {
-                      "symbol": "Allowance"
+                      "symbol": "Balance"
                     },
                     {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "from"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "spender"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                          }
-                        }
-                      ]
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                     }
                   ]
                 },
-                "durability": "temporary",
+                "durability": "persistent",
                 "val": {
                   "map": [
                     {
@@ -1207,10 +1170,18 @@
                     },
                     {
                       "key": {
-                        "symbol": "live_until_ledger"
+                        "symbol": "authorized"
                       },
                       "val": {
-                        "u32": 1000
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "clawback"
+                      },
+                      "val": {
+                        "bool": false
                       }
                     }
                   ]
@@ -1219,7 +1190,7 @@
             },
             "ext": "v0"
           },
-          1001
+          518400
         ]
       ],
       [
@@ -1266,7 +1237,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 10000000000
+                          "lo": 0
                         }
                       }
                     },
@@ -1909,7 +1880,7 @@
                 "bytes": "04cadb4a570fd2e4652e814101509912cce6c9a2325d6eec8d7100caf859f3e0"
               },
               {
-                "symbol": "approve"
+                "symbol": "transfer"
               }
             ],
             "data": {
@@ -1925,9 +1896,6 @@
                     "hi": 0,
                     "lo": 10000000000
                   }
-                },
-                {
-                  "u32": 1000
                 }
               ]
             }
@@ -1945,7 +1913,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "approve"
+                "symbol": "transfer"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
@@ -1958,17 +1926,10 @@
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 10000000000
-                  }
-                },
-                {
-                  "u32": 1000
-                }
-              ]
+              "i128": {
+                "hi": 0,
+                "lo": 10000000000
+              }
             }
           }
         }
@@ -1987,7 +1948,7 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "approve"
+                "symbol": "transfer"
               }
             ],
             "data": "void"
